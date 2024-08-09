@@ -1,0 +1,352 @@
+---
+title: "Transfer Entrop Flow Analysis"
+author: "Mariel Jones"
+date: "2024-08-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+fig_save = "./Figures/itPlots/"
+load_path = "./Data and Codes/Cleaned Data/"
+```
+
+```{r}
+library(astsa)
+library(dplyr)
+library(xts)
+library(lubridate)
+library(RTransferEntropy)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+```
+
+### Data Import from EDI
+
+```{r}
+## Precipitation
+precipURL  <- "https://pasta.lternet.edu/package/data/eml/edi/849/5/4f7e0b3029833c26d64fda3d23037d1d" 
+precipInfile <- tempfile()
+try(download.file(precipURL,precipInfile,method="curl"))
+if (is.na(file.size(precipInfile))) download.file(precipURL,precipInfile,method="auto")
+
+precip <-read.csv(precipInfile , header=F, skip=1, sep = ",", 
+               col.names=c("TIMESTAMP", "South_PCP", "South_Flag"),check.names=TRUE)
+               
+unlink(precipInfile)
+tmp3TIMESTAMP<-as.POSIXct(precip$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(precip[precip$TIMESTAMP != "",]) == length(tmp3TIMESTAMP[!is.na(tmp3TIMESTAMP)])){precip$TIMESTAMP <- tmp3TIMESTAMP } else {print("Date conversion failed for precip$TIMESTAMP. Please inspect the data and do the date conversion yourself.")}                                 
+if (class(precip$South_PCP)=="factor") precip$South_PCP <-as.numeric(levels(precip$South_PCP))[as.integer(precip$South_PCP) ]               
+if (class(precip$South_PCP)=="character") precip$South_PCP <-as.numeric(precip$South_PCP)
+if (class(precip$South_Flag)!="factor") precip$South_Flag<- as.factor(precip$South_Flag)
+                
+# Convert Missing Values to NA for non-dates
+precip$South_PCP <- ifelse((trimws(as.character(precip$South_PCP))==trimws("NA")),NA,precip$South_PCP)         
+## 10 minute soil moisture
+smURL  <- "https://pasta.lternet.edu/package/data/eml/edi/989/3/e25d4f15276a3158af412758502a59b0" 
+smInfile <- tempfile()
+try(download.file(smURL,smInfile,method="curl"))
+if (is.na(file.size(smInfile))) download.file(smURL,smInfile,method="auto")
+
+sm <-read.csv(smInfile, header=F, skip=1, sep=",", 
+              col.names=c("TIMESTAMP", "S2S_UP_SH", "S2S_UP_DP", "S2S_MI_SH", 
+                          "S2S_MI_DP", "S2S_LO_SH", "S2S_LO_DP", "S2N_UP_SH",     
+                          "S2N_UP_DP", "S2N_MI_SH", "S2N_MI_DP", "S2N_LO_SH",     
+                          "S2N_LO_DP"), check.names=TRUE)
+               
+unlink(smInfile)
+tmp2TIMESTAMP<-as.POSIXct(sm$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(sm[sm$TIMESTAMP != "",]) == length(tmp2TIMESTAMP[!is.na(tmp2TIMESTAMP)])){sm$TIMESTAMP <- tmp2TIMESTAMP } else {print("Date conversion failed for sm$TIMESTAMP. Please inspect the data and do the date conversion yourself.")}                                                                    
+                                
+## Bog well WTE
+bogURL  <- "https://pasta.lternet.edu/package/data/eml/edi/562/3/671f15337a677da71852de506a8d9b05" 
+bogInfile <- tempfile()
+try(download.file(bogURL,bogInfile,method="curl"))
+if (is.na(file.size(bogInfile))) download.file(bogURL,bogInfile,method="auto")
+
+bog <-read.csv(bogInfile, header=F,skip=1, sep=",",
+               col.names=c("PEATLAND", "DATE", "WTE", "FLAG"), check.names=TRUE)
+               
+unlink(bogInfile)
+if (class(bog$PEATLAND)!="factor") bog$PEATLAND<- as.factor(bog$PEATLAND)                                   
+tmp1DATE<-as.Date(bog$DATE,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(bog[bog$DATE != "",]) == length(tmp1DATE[!is.na(tmp1DATE)])){bog$DATE <- tmp1DATE } else {print("Date conversion failed for bog$DATE. Please inspect the data and do the date conversion yourself.")}
+if (class(bog$WTE)=="factor") bog$WTE <-as.numeric(levels(bog$WTE))[as.integer(bog$WTE) ]               
+if (class(bog$WTE)=="character") bog$WTE <-as.numeric(bog$WTE)
+if (class(bog$FLAG)!="factor") bog$FLAG<- as.factor(bog$FLAG)
+                
+# Convert Missing Values to NA for non-dates
+bog$WTE <- ifelse((trimws(as.character(bog$WTE))==trimws("NA")),NA,bog$WTE)  
+
+# Select just the S2 watershed
+bog = bog %>%
+  filter(PEATLAND == 'S2')
+
+## Lagg transition well WTE
+laggwellURL  <- "https://pasta.lternet.edu/package/data/eml/edi/1126/1/2532f551e6e5a97aee8f140fb5da8a74" 
+laggwellInfile <- tempfile()
+try(download.file(laggwellURL,laggwellInfile,method="curl"))
+if (is.na(file.size(laggwellInfile))) download.file(laggwellURL,laggwellInfile,method="auto")
+
+laggwell <-read.csv(laggwellInfile, header=F, skip=1, sep=",", quot='"' ,
+                    col.names=c("DateTime", "LoggerLevel", "LoggerTemp", "BP",     
+                                "Precip", "bogwell", "well_elev", "well_name",     
+                                "watershed", "year"), check.names=TRUE)
+               
+unlink(laggwellInfile)
+              
+tmp1DateTime<-as.POSIXct(laggwell$DateTime,format="%Y-%m-%d %H:%M:%S" )
+# Keep the new dates only if they all converted correctly
+if(nrow(laggwell[laggwell$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){laggwell$DateTime <- tmp1DateTime } else {print("Date conversion failed for laggwell$DateTime. Please inspect the data and do the date conversion yourself.")}                                                                    
+                                
+## Streamflow
+streamURL  <- "https://pasta.lternet.edu/package/data/eml/edi/573/1/2aca4b900546e80ed7dd409ff1ad9787" 
+streamInfile <- tempfile()
+try(download.file(streamURL,streamInfile,method="curl"))
+if (is.na(file.size(streamInfile))) download.file(streamURL,streamInfile,method="auto")
+
+stream <-read.csv(streamInfile, header=F, skip=1, sep=",",
+                  col.names=c("Peatland", "DateTime", "Stage.ft", "Q.cfs", "q.mmh", "q.interval"),
+                  check.names=TRUE)
+               
+unlink(streamInfile)
+if (class(stream$Peatland)!="factor") stream$Peatland<- as.factor(stream$Peatland)                       
+tmp1DateTime<-as.POSIXct(stream$DateTime,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(stream[stream$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){stream$DateTime <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")}                                                                    
+
+```
+
+```{r}
+#Data sets: stream (1962-2017), sm (2008-2023), precip (2011-2024), laggwell (2018-2020), bog (1961-2023)
+
+#Resample precip to daily timestep
+#round dates down to week
+precip$day <- floor_date(precip$TIMESTAMP, "day")
+
+#find mean sales by week
+precip_daily = data.frame(precip %>%
+  group_by(day) %>%
+  summarize(South_PCP = sum(South_PCP)))
+
+summary(precip_daily)
+summary(bog)
+```
+
+```{r}
+#Resample well data to daily timestep
+#round dates down to week
+laggwell$day <- floor_date(laggwell$DateTime, "day")
+
+#find mean sales by week
+laggwell_daily = data.frame(laggwell) %>%
+  group_by(day, well_name) %>%
+  summarize(well_elev = mean(well_elev))
+
+head(laggwell_daily)
+```
+```{r}
+#Melt the lagg data so there is a column per well
+laggwell_melt = laggwell_daily %>%
+  pivot_wider(names_from = 'well_name', values_from = 'well_elev')
+head(laggwell_melt)
+```
+
+```{r}
+#Resample soil moisture to daily timestep
+#round dates down to week
+sm$day <- floor_date(sm$TIMESTAMP, "day")
+
+#find mean sales by week
+sm_daily = data.frame(sm) %>%
+  group_by(day) %>%
+  summarise_all(mean) %>%
+  select(-TIMESTAMP)
+
+head(sm_daily)
+```
+
+```{r}
+#Resample streamflow to daily timestep
+#round dates down to week
+stream$day <- floor_date(stream$DateTime, "day")
+
+#find mean sales by week
+stream_daily = data.frame(stream) %>%
+  group_by(day) %>%
+  summarize(qInterval = mean(q.interval)/10) 
+
+head(stream_daily)
+```
+
+
+```{r}
+#Merge into a dataframe by date and clip to full series
+dat = merge(x = precip_daily, y = bog, by.x = "day", by.y = "DATE", all = TRUE)
+dat = merge(dat, laggwell_melt, by = 'day', all = TRUE)
+dat = merge(dat, sm_daily, by = 'day', how = 'outer', all = TRUE)
+dat = merge(dat, stream_daily, by = 'day', how = 'outer', all = TRUE)
+head(dat)
+```
+
+## Initial Plotting
+
+```{r}
+#Initial timeseries plots
+
+#Precip
+ggplot(data = dat, aes(x = day, y = South_PCP)) +
+  geom_point(color = 'gray') +
+  geom_line() +
+  xlab('Date') + 
+  ylab('Precipitation [cm]') + 
+  theme(aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#Bog WTE
+ggplot(data = dat, aes(x = day, y = WTE)) + 
+  geom_point(color = 'gray') + 
+  geom_line() + 
+  xlab('Date') + 
+  ylab('Bog Water Table Elevation [m]') +
+  theme(aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#LAGG WTE
+ggplot(data = dat) +
+  geom_line(aes(x = day, y = KF42W), color = 'darkolivegreen1') + 
+  geom_line(aes(x = day, y = KF43W), color = 'cadetblue1') + 
+  geom_line(aes(x = day, y = KF45W), color = 'brown1') +
+  geom_line(aes(x = day, y = S2S1), color = 'darkolivegreen') + 
+  geom_line(aes(x = day, y = S2S2), color = 'cadetblue3') + 
+  geom_line(aes(x = day, y = S2S3), color = 'brown') +
+  xlab('Date') +
+  ylab('Lagg Water Table Elevation [m]') + 
+  theme(legend.position = 'none', 
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#SOIL 
+ggplot(data = dat) +
+  geom_line(aes(x = day, y = S2S_UP_SH), color = 'darkolivegreen1') + 
+  geom_line(aes(x = day, y = S2S_UP_DP), color = 'darkolivegreen1', linetype = 2) + 
+  geom_line(aes(x = day, y = S2S_MI_SH), color = 'darkolivegreen3') +
+  geom_line(aes(x = day, y = S2S_MI_DP), color = 'darkolivegreen3', linetype = 2) + 
+  geom_line(aes(x = day, y = S2S_LO_SH), color = 'darkolivegreen') + 
+  geom_line(aes(x = day, y = S2S_LO_DP), color = 'darkolivegreen', linetype = 2) +
+  geom_line(aes(x = day, y = S2N_UP_SH), color = 'darkslategray1') + 
+  geom_line(aes(x = day, y = S2N_UP_DP), color = 'darkslategray1', linetype = 2) + 
+  geom_line(aes(x = day, y = S2N_MI_SH), color = 'darkslategray3') +
+  geom_line(aes(x = day, y = S2N_MI_DP), color = 'darkslategray3', linetype = 2) + 
+  geom_line(aes(x = day, y = S2N_LO_SH), color = 'darkslategray') + 
+  geom_line(aes(x = day, y = S2N_LO_DP), color = 'darkslategray', linetype = 2) +
+  xlab('Date') +
+  ylab('Soil Moisture [m3/m3]') +
+  theme(legend.position = 'none', 
+        aspect.ratio = 0.3, 
+        panel.background = element_blank()) 
+
+#Streamflow
+ggplot(data = dat, aes(x = day, y = qInterval)) +
+  geom_point(color = 'gray') + 
+  geom_line() + 
+  xlab('Date') + 
+  ylab('Streamflow [cm]') + 
+  theme(aspect.ratio = 0.3,
+        panel.background = element_blank())
+
+```
+
+## Clip to timescales for IT analysis
+
+Leaving out the lagg water table levels, clip the data to the longest time length possible (~2012 - 2022)
+
+```{r}
+data_clipped = dat %>%
+  select(-c('KF42W', 'KF43W', 'KF45W', 'S2S1', 'S2S2', 'S2S3', 'S6S1', 'S6S2', 'S6S3', 'S6N1', 'S6N2', 'S6N3'))
+
+head(data_clipped)
+```
+
+
+```{r}
+data = merge(data_clipped,
+             data.frame(times = floor_date(seq(from = as.POSIXct('2011-02-03'), to = as.POSIXct('2017-02-28'), by = "day"), 'day')), 
+             by.x = 'day', by.y = 'times', 
+             all.y = TRUE)
+
+head(data)
+tail(data)
+  
+```
+```{r}
+
+#Precip
+ggplot(data = data, aes(x = day, y = South_PCP)) +
+  geom_point(color = 'gray') +
+  geom_line() +
+  xlab('Date') + 
+  ylab('Precipitation [cm]') + 
+  theme(aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#Bog WTE
+ggplot(data = data, aes(x = day, y = WTE)) + 
+  geom_point(color = 'gray') + 
+  geom_line() + 
+  xlab('Date') + 
+  ylab('Bog Water Table Elevation [m]') +
+  theme(aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+
+#SOIL 
+ggplot(data = data) +
+  geom_line(aes(x = day, y = S2S_UP_SH), color = 'darkolivegreen1') + 
+  geom_line(aes(x = day, y = S2S_UP_DP), color = 'darkolivegreen1', linetype = 2) + 
+  geom_line(aes(x = day, y = S2S_MI_SH), color = 'darkolivegreen3') +
+  geom_line(aes(x = day, y = S2S_MI_DP), color = 'darkolivegreen3', linetype = 2) + 
+  geom_line(aes(x = day, y = S2S_LO_SH), color = 'darkolivegreen') + 
+  geom_line(aes(x = day, y = S2S_LO_DP), color = 'darkolivegreen', linetype = 2) +
+  geom_line(aes(x = day, y = S2N_UP_SH), color = 'darkslategray1') + 
+  geom_line(aes(x = day, y = S2N_UP_DP), color = 'darkslategray1', linetype = 2) + 
+  geom_line(aes(x = day, y = S2N_MI_SH), color = 'darkslategray3') +
+  geom_line(aes(x = day, y = S2N_MI_DP), color = 'darkslategray3', linetype = 2) + 
+  geom_line(aes(x = day, y = S2N_LO_SH), color = 'darkslategray') + 
+  geom_line(aes(x = day, y = S2N_LO_DP), color = 'darkslategray', linetype = 2) +
+  xlab('Date') +
+  ylab('Soil Moisture [m3/m3]') +
+  theme(legend.position = 'none', 
+        aspect.ratio = 0.3, 
+        panel.background = element_blank()) 
+
+#Streamflow
+ggplot(data = data, aes(x = day, y = qInterval)) +
+  geom_point(color = 'gray') + 
+  geom_line() + 
+  xlab('Date') + 
+  ylab('Streamflow [cm]') + 
+  theme(aspect.ratio = 0.3,
+        panel.background = element_blank())
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

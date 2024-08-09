@@ -48,11 +48,11 @@ def te(x, y, lag = 1):
     #lag - temporal lag that will be used to shift the X series
 
     #X_(t - \tau\delta_t)
-    shiftedX = x[: len(x) - lag].reset_index(drop = True)
+    shiftedX = list(x[: len(x) - lag])
     #Y_(t - \delta_t)
-    shiftedY = y[lag - 1 : len(x) - 1].reset_index(drop = True)
+    shiftedY = list(y[lag - 1 : len(x) - 1])
     #cut y
-    cutY = y[lag:].reset_index(drop = True)
+    cutY = list(y[lag:])
     
     #Check lengths are the same
     if((len(shiftedX) != len(shiftedY)) or(len(shiftedY) != len(cutY))):
@@ -73,15 +73,13 @@ def te_test(x, y, lag = 1, n = 100, alpha = 0.05):
 
     #testable te
     t = te(x, y, lag = lag)
-
+    
     #randomly scramble data
     tss = []
     for i in range(0, n):
         #compute shuffled transfer entropy
-        xss = x
-        random.shuffle(xss)
-        yss = y
-        random.shuffle(yss)
+        xss = random.sample(list(x), len(x))
+        yss = random.sample(list(y), len(y))
         tss.append(te(xss, yss, lag = lag))
 
     #fit gaussian
