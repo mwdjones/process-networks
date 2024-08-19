@@ -65,7 +65,8 @@ sm <-read.csv(smInfile, header=F, skip=1, sep=",",
 unlink(smInfile)
 tmp2TIMESTAMP<-as.POSIXct(sm$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
 # Keep the new dates only if they all converted correctly
-if(nrow(sm[sm$TIMESTAMP != "",]) == length(tmp2TIMESTAMP[!is.na(tmp2TIMESTAMP)])){sm$TIMESTAMP <- tmp2TIMESTAMP } else {print("Date conversion failed for sm$TIMESTAMP. Please inspect the data and do the date conversion yourself.")}                                                                    
+if(nrow(sm[sm$TIMESTAMP != "",]) == length(tmp2TIMESTAMP[!is.na(tmp2TIMESTAMP)])){sm$TIMESTAMP <- tmp2TIMESTAMP } else {print("Date conversion failed for sm$TIMESTAMP. Please inspect the data and do the date conversion yourself.")}    
+
                                 
 ## Bog well WTE
 bogURL  <- "https://pasta.lternet.edu/package/data/eml/edi/562/3/671f15337a677da71852de506a8d9b05" 
@@ -92,6 +93,8 @@ bog$WTE <- ifelse((trimws(as.character(bog$WTE))==trimws("NA")),NA,bog$WTE)
 bog = bog %>%
   filter(PEATLAND == 'S2')
 
+
+
 ## Lagg transition well WTE
 laggwellURL  <- "https://pasta.lternet.edu/package/data/eml/edi/1126/1/2532f551e6e5a97aee8f140fb5da8a74" 
 laggwellInfile <- tempfile()
@@ -107,7 +110,9 @@ unlink(laggwellInfile)
               
 tmp1DateTime<-as.POSIXct(laggwell$DateTime,format="%Y-%m-%d %H:%M:%S" )
 # Keep the new dates only if they all converted correctly
-if(nrow(laggwell[laggwell$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){laggwell$DateTime <- tmp1DateTime } else {print("Date conversion failed for laggwell$DateTime. Please inspect the data and do the date conversion yourself.")}                                                                    
+if(nrow(laggwell[laggwell$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){laggwell$DateTime <- tmp1DateTime } else {print("Date conversion failed for laggwell$DateTime. Please inspect the data and do the date conversion yourself.")}
+
+
                                 
 ## Streamflow
 streamURL  <- "https://pasta.lternet.edu/package/data/eml/edi/573/1/2aca4b900546e80ed7dd409ff1ad9787" 
@@ -123,12 +128,29 @@ unlink(streamInfile)
 if (class(stream$Peatland)!="factor") stream$Peatland<- as.factor(stream$Peatland)                       
 tmp1DateTime<-as.POSIXct(stream$DateTime,format="%Y-%m-%d %H:%M:%S")
 # Keep the new dates only if they all converted correctly
-if(nrow(stream[stream$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){stream$DateTime <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")}                                                                    
+if(nrow(stream[stream$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){stream$DateTime <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
 
+
+## Air Temperature
+tempURL  <- "https://pasta.lternet.edu/package/data/eml/edi/859/4/e1e7792f8465017e133535bccbba4b6c" 
+tempInfile <- tempfile()
+try(download.file(tempURL,tempInfile,method="curl"))
+if (is.na(file.size(tempInfile))) download.file(tempURL,tempInfile,method="auto")
+temp <-read.csv(tempInfile, header=F, skip=1, sep=",", 
+               col.names=c("TIMESTAMP", "Air_TempC_Avg", "RH",     
+                    "Soil_TempC_Avg", "WS_Tot", "WindDir_D",     
+                    "WindDir_SD", "PAR_Den_Avg", "Soil_VWC_Avg"),
+               check.names=TRUE)
+unlink(tempInfile)                      
+tmp1DateTime<-as.POSIXct(temp$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(temp[temp$TIMESTAMP != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){temp$TIMESTAMP <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
+
+## ET from Open ET
 ```
 
 ```{r}
-#Data sets: stream (1962-2017), sm (2008-2023), precip (2011-2024), laggwell (2018-2020), bog (1961-2023)
+#Data sets: stream (1962-2017), sm (2008-2023), precip (2011-2024), laggwell (2018-2020), bog (1961-2023), temp (2008-2024)
 
 #Resample precip to daily timestep
 #round dates down to week
@@ -138,9 +160,6 @@ precip$day <- floor_date(precip$TIMESTAMP, "day")
 precip_daily = data.frame(precip %>%
   group_by(day) %>%
   summarize(South_PCP = sum(South_PCP)))
-
-summary(precip_daily)
-summary(bog)
 ```
 
 ```{r}
@@ -152,9 +171,21 @@ laggwell$day <- floor_date(laggwell$DateTime, "day")
 laggwell_daily = data.frame(laggwell) %>%
   group_by(day, well_name) %>%
   summarize(well_elev = mean(well_elev))
-
-head(laggwell_daily)
 ```
+
+```{r}
+#Resample temperature to daily timestep
+#round dates down to week
+temp$day <- floor_date(temp$TIMESTAMP, "day")
+
+#find mean sales by week
+temp_daily = data.frame(temp) %>%
+  group_by(day) %>%
+  summarize(AirT_C = mean(Air_TempC_Avg))
+
+head(temp_daily)
+```
+
 ```{r}
 #Melt the lagg data so there is a column per well
 laggwell_melt = laggwell_daily %>%
@@ -189,6 +220,7 @@ stream_daily = data.frame(stream) %>%
 head(stream_daily)
 ```
 
+Merge data into one data frame for IT analysis
 
 ```{r}
 #Merge into a dataframe by date and clip to full series
@@ -196,6 +228,7 @@ dat = merge(x = precip_daily, y = bog, by.x = "day", by.y = "DATE", all = TRUE)
 dat = merge(dat, laggwell_melt, by = 'day', all = TRUE)
 dat = merge(dat, sm_daily, by = 'day', how = 'outer', all = TRUE)
 dat = merge(dat, stream_daily, by = 'day', how = 'outer', all = TRUE)
+dat = merge(dat, temp_daily, by = 'day', how = 'outer', all = TRUE)
 head(dat)
 ```
 
@@ -340,6 +373,14 @@ ggplot(data = data, aes(x = day, y = qInterval)) +
   theme(aspect.ratio = 0.3,
         panel.background = element_blank())
 
+#Temperature
+ggplot(data = data, aes(x = day, y = AirT_C)) + 
+  geom_point(color = 'gray') + 
+  geom_line() + 
+  xlab('Date') + 
+  ylab('Air Temperature, [C]') + 
+  theme(aspect.ratio = 0.3, 
+        panel.background = element_blank())
 ```
 
 ## Aggregate to Monthly timescales
@@ -351,9 +392,9 @@ data$month <- floor_date(data$day, "month")
 #group by and summarize
 data_means = data %>%
    group_by(month) %>%
-   select(c(month, South_PCP, WTE, qInterval)) %>%
+   select(c(month, South_PCP, WTE, qInterval, AirT_C)) %>%
    summarize_all(mean, na.rm = TRUE) %>%
-   rename(meanPrecip = South_PCP, meanWTE = WTE, meanQ = qInterval)
+   rename(meanPrecip = South_PCP, meanWTE = WTE, meanQ = qInterval, meanT = AirT_C)
 
 data_totals = data %>%
    group_by(month) %>%
@@ -387,9 +428,11 @@ p1 = ggplot(data = data_monthly) +
   geom_line(aes(x = month, y = meanPrecip, color = 'mean Precip')) +
   geom_point(aes(x = month, y = totPrecip, color = 'total Precip')) +
   geom_line(aes(x = month, y = totPrecip, color = 'total Precip')) +
+  geom_point(aes(x = month, y = meanT, color = 'mean Temp')) +
+  geom_line(aes(x = month, y = meanT, color = 'mean Temp')) +
   xlab('Date') + 
   ylab('Precipitation [cm]') + 
-  scale_color_manual(" ", values = c('gray', 'black')) + 
+  scale_color_manual(" ", values = c('gray', 'black', 'darkred')) + 
   theme(legend.position = 'top',
         aspect.ratio = 0.3, 
         panel.background = element_blank())
@@ -455,7 +498,8 @@ data_monthly_nogaps = data_monthly %>%
   mutate(S2S_DP = na.approx(S2S_DP)) %>%
   mutate(S2S_SH = na.approx(S2S_SH)) %>%
   mutate(S2N_DP = na.approx(S2N_DP)) %>%
-  mutate(S2N_SH = na.approx(S2N_SH))
+  mutate(S2N_SH = na.approx(S2N_SH)) %>%
+  mutate(meanT = na.approx(meanT))
 
 summary(data_monthly_nogaps)
 ```
@@ -477,31 +521,24 @@ ggplot(data = data_monthly_nogaps) +
         aspect.ratio = 0.3, 
         panel.background = element_blank()) 
 ```
+```{r}
+ggplot(data = data_monthly_nogaps) +
+  geom_point(aes(x = month, y = meanPrecip, color = 'mean Precip')) +
+  geom_line(aes(x = month, y = meanPrecip, color = 'mean Precip')) +
+  geom_point(aes(x = month, y = totPrecip, color = 'total Precip')) +
+  geom_line(aes(x = month, y = totPrecip, color = 'total Precip')) +
+  geom_point(aes(x = month, y = meanT, color = 'mean Temp')) +
+  geom_line(aes(x = month, y = meanT, color = 'mean Temp')) +
+  xlab('Date') + 
+  ylab('Precipitation [cm]') + 
+  scale_color_manual(" ", values = c('gray', 'darkred', 'black')) + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+```
+
 
 ## Information Theory Lagg Analysis
-
-```{r}
-# Transcribed functions from python
-#Generate probability distribution
-pdf = function(dat, bins = 15){
-    #dat - data for which the pdf is to be derived
-    #bins - number of histogram bins, bins are generally set to 15 given the results of
-    #  optimization methods described in Ruddell & Kumar 2009
-    h = hist(dat,  breaks = bins, plot = FALSE)
-    return(h$density/(sum(h$density)))
-}
-
- 
-#Calculate Entropy
-entropy = function(dat){
-    #dat - data for which the entropy is to be calculated
-    probs = pdf(dat)
-    vals = probs*log2(probs)
-    h = -sum(vals, na.rm = TRUE)
-    return(h)
-}
-
-```
 
 ```{r}
 ## Assume one immediate history
@@ -564,25 +601,21 @@ Full test of a year of lags
 ```{r}
 #Take out the non-useful columns
 data_monthly_reduced = data_monthly_nogaps %>%
-  select(-c(month, meanPrecip, meanQ))
+  select(-c(month, meanPrecip, meanQ, meanT))
 
 #Collect combinations of variables
-combinations_x = c("totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPrecip",
-                   "meanWTE", "meanWTE", 
-                   "S2S_SH", "S2S_SH" , "S2S_SH", 
-                   "S2N_SH", "S2N_SH" , "S2N_SH", 
-                   "S2S_DP", "S2S_DP", 
-                   "S2N_DP", "S2N_DP", 
-                   "totQ"
-                   )
-combinations_y = c("totPrecip", "meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP", 
-                   "meanWTE", "totQ",
-                   "S2S_SH", "S2S_DP", "totQ", 
-                   "S2N_SH", "S2N_DP", "totQ", 
-                   "S2S_DP", "totQ",
-                   "S2N_DP", "totQ",
-                   "totQ"
-                   )
+combinations_x = c("totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPrecip",
+                   "meanWTE", 
+                   "S2S_SH" , "S2S_SH", 
+                   "S2N_SH" , "S2N_SH", 
+                   "S2S_DP", 
+                   "S2N_DP")
+combinations_y = c("meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP", 
+                   "totQ",
+                   "S2S_DP", "totQ", 
+                   "S2N_DP", "totQ", 
+                   "totQ",
+                   "totQ")
 ```
 
 
@@ -593,7 +626,7 @@ lags = 18
 te_df = data.frame(matrix(ncol = 0, nrow = lags))
 
 
-for(k in seq(1, 2)){
+for(k in seq(1, length(combinations_x))){
     #Reset
     te_results_for = c()
     
@@ -609,14 +642,14 @@ for(k in seq(1, 2)){
     #Loop through lags
     for(l in seq(1, lags)){
       #Shift data
-      shifted = lagTS(data_monthly[i], data_monthly[j], l = l)
+      shifted = lagTS(data_monthly_reduced[i], data_monthly_reduced[j], l = l)
       
       #Compute TE
-      te = transfer_entropy(shifted[i], shifted[j], quiet = TRUE)
+      te = transfer_entropy(shifted[i], shifted[j], quiet = TRUE, seed = 12345)
       
       #Add to full te list
       allte[l] = te$coef[1,1]
-      tecrit[l] = mean(te$boot[1]) + 1.66*sd(te$boot[1])
+      tecrit[l] = mean(te$boot["dtexy",]) + 1.66*sd(te$boot["dtexy",])
       
       #If significant, add to other list, else na
       if(te$coef[1,4] < 0.05){
@@ -635,6 +668,7 @@ for(k in seq(1, 2)){
             geom_line(aes(x = seq(1, lags), y = tecrit), color = 'lightgray') +
             xlab('Lag') + 
             ylab('Transfer Entropy') +
+            labs(subtitle = paste0(i, '->', j)) +
             theme(aspect.ratio = 0.3, 
                   panel.background = element_blank())
     save_plot(paste0(fig_save, 'lag plots/', i, '->', j, '-lagg-series.pdf'), lag_plot, base_height = 2, base_asp = 3)
@@ -668,8 +702,478 @@ lag_heatmap = ggplot(te_df_melt, aes(lag, variable)) +
 save_plot(paste0(fig_save, 'laggedheatmap.pdf'), lag_heatmap, base_height = 5, base_asp = 2)
 save_plot(paste0(fig_save, 'laggedheatmap.jpeg'), lag_heatmap, base_height = 5, base_asp = 2)
 lag_heatmap
+```
 
 
+```{r}
+#Full Adjacency matrix
+vars = c("totPrecip", "meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP")
+
+A_te = array(dim = c(length(vars), length(vars), lags))
+A_crit = array(dim = c(length(vars), length(vars), lags))
+
+for(i in seq(1, length(vars))){
+  for(j in seq(1, length(vars))){
+    #Assign variables
+    iv = vars[i]
+    jv = vars[j]
+    
+    #Loop through lags
+    for(l in seq(1, lags)){
+      #Shift data
+      shifted = lagTS(data_monthly_reduced[iv], data_monthly_reduced[jv], l = l)
+      
+      #Compute TE
+      te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
+      
+      #Add to full te list
+      A_te[i, j, l] = te$coef[1,1]
+      A_crit[i, j, l] = mean(te$boot["dtexy",]) + 1.66*sd(te$boot["dtexy",])
+    }
+  }
+}
+
+```
+
+```{r}
+#Watershed subsystem
+A_watershed = A_te[-c(1, 3), -c(1, 3) , ]
+A_south = A_te[c(4, 5), c(4, 5), ]
+A_north = A_te[c(6, 7), c(6, 7), ]
+
+#Watershed subsystems with only significant TE values
+mask = A_te > A_crit
+A_sig = replace(A_te, !mask, NA)
+A_watershed_sig = A_sig[-c(1, 3), -c(1, 3) , ]
+A_south_sig = A_sig[c(4, 5), c(4, 5), ]
+A_north_sig = A_sig[c(6, 7), c(6, 7), ]
+```
+
+
+```{r}
+notSig = ggplot() + 
+  #Total information flow within the system
+  geom_line(aes(x = seq(1, 18), y = colSums(A_te, dims = 2), color = 'Total')) + 
+  geom_point(aes(x = seq(1, 18), y = colSums(A_te, dims = 2), color = 'Total')) + 
+  #Total information exchange within the system (no P or Q)
+  geom_line(aes(x = seq(1, 18), y = colSums(A_watershed, dims = 2), color = 'Watershed')) +
+  geom_point(aes(x = seq(1, 18), y = colSums(A_watershed, dims = 2), color = 'Watershed')) +  
+  #Total information exchange in the south hillslope
+  geom_line(aes(x = seq(1, 18), y = colSums(A_south, dims = 2), color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = colSums(A_south, dims = 2), color = 'South Hillslope')) +
+  #Total information exchange in the north hillslope
+  geom_line(aes(x = seq(1, 18), y = colSums(A_north, dims = 2), color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = colSums(A_north, dims = 2), color = 'North Hillslope')) + 
+  labs(x = 'Lag', y = 'Total System Information Transfer') + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue", "black", "darkred")) + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+Sig = ggplot() + 
+  #Total information flow within the system
+  geom_line(aes(x = seq(1, 18), y = colSums(A_sig, dims = 2, na.rm = TRUE), color = 'Total')) + 
+  geom_point(aes(x = seq(1, 18), y = colSums(A_sig, dims = 2, na.rm = TRUE), color = 'Total')) + 
+  #Total information exchange within the system (no P or Q)
+  geom_line(aes(x = seq(1, 18), y = colSums(A_watershed_sig, dims = 2, na.rm = TRUE), color = 'Watershed')) +
+  geom_point(aes(x = seq(1, 18), y = colSums(A_watershed_sig, dims = 2, na.rm = TRUE), color = 'Watershed')) +  
+  #Total information exchange in the south hillslope
+  geom_line(aes(x = seq(1, 18), y = colSums(A_south_sig, dims = 2, na.rm = TRUE), color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = colSums(A_south_sig, dims = 2, na.rm = TRUE), color = 'South Hillslope')) +
+  #Total information exchange in the north hillslope
+  geom_line(aes(x = seq(1, 18), y = colSums(A_north_sig, dims = 2, na.rm = TRUE), color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = colSums(A_north_sig, dims = 2, na.rm = TRUE), color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue", "black", "darkred")) + 
+  labs(x = 'Lag', y = ' ') + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+plot_grid(notSig, Sig, 
+          labels = c('A', 'B'), 
+          align = 'hv', 
+          ncol = 1)
+  
+```
+There is more significant information flow between soil layers on the north hillslope than the south hillslope. 
+
+The north hillslope seems to have more overall information transfer than the south hillslope, is there a signficant difference in the turnover of water on the north hillslope? This could be due to the fact that the north hillslope is south facing so there is higher ET, snow melt rates, etc. which leads to more turnover in the soil moisture
+signatures.
+
+Based on the data, the theory here is that higher soil moisture in the deeper layers on the south hillslope due to lower ET limit which simply encourages lateral runoff instead of infiltration into the deeper soil layers. If this were true, then the effect would be more pronounced at lower hillslopes and we would see input from shallow soil moisture at high elevation into shallow soil moisture at lower elevation.
+
+```{r}
+#Group soil moisture, un-lumped by hillslope and depth, data into monthly bins for separate analysis
+sm_daily$month = floor_date(sm_daily$day, "month")
+sm_monthly = sm_daily %>%
+  group_by(month) %>%
+  summarize_all(mean, na.rm = TRUE)
+
+#Clip to same timescale as other data
+sm_monthly = merge(sm_monthly,
+             data.frame(times = floor_date(seq(from = as.POSIXct('2011-02-03'), to = as.POSIXct('2017-02-28'), by = "month"), 'month')), 
+             by.x = 'month', by.y = 'times', 
+             all.y = TRUE) %>%
+  select(-c(day))
+
+head(sm_monthly)
+```
+
+```{r}
+sm_monthly_nogaps = sm_monthly %>%
+   mutate(across(starts_with("S2"), ~ na.approx(.x, na.rm = FALSE))) 
+
+summary(sm_monthly_nogaps)
+```
+
+
+```{r}
+smUP = ggplot(data = sm_monthly_nogaps) +
+  geom_line(aes(x = month, y = S2S_UP_SH, color = 'S2S SH')) +
+  geom_line(aes(x = month, y = S2S_UP_DP, color = 'S2S DP'), linetype = 3) + 
+  geom_line(aes(x = month, y = S2N_UP_SH, color = 'S2N SH')) +
+  geom_line(aes(x = month, y = S2N_UP_DP, color = 'S2N DP'), linetype = 3) + 
+  geom_point(aes(x = month, y = S2S_UP_SH, color = 'S2S SH')) +
+  geom_point(aes(x = month, y = S2S_UP_DP, color = 'S2S DP')) + 
+  geom_point(aes(x = month, y = S2N_UP_SH, color = 'S2N SH')) +
+  geom_point(aes(x = month, y = S2N_UP_DP, color = 'S2N DP')) + 
+  xlab('Date') +
+  ylab('Soil Moisture [m3/m3]') +
+  scale_color_manual(" ", values =  c("darkolivegreen3", "darkolivegreen3", "royalblue", "royalblue")) + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank()) 
+
+smMI = ggplot(data = sm_monthly_nogaps) +
+  geom_line(aes(x = month, y = S2S_MI_SH, color = 'S2S SH')) +
+  geom_line(aes(x = month, y = S2S_MI_DP, color = 'S2S DP'), linetype = 3) + 
+  geom_line(aes(x = month, y = S2N_MI_SH, color = 'S2N SH')) +
+  geom_line(aes(x = month, y = S2N_MI_DP, color = 'S2N DP'), linetype = 3) + 
+  geom_point(aes(x = month, y = S2S_MI_SH, color = 'S2S SH')) +
+  geom_point(aes(x = month, y = S2S_MI_DP, color = 'S2S DP')) + 
+  geom_point(aes(x = month, y = S2N_MI_SH, color = 'S2N SH')) +
+  geom_point(aes(x = month, y = S2N_MI_DP, color = 'S2N DP')) + 
+  xlab('Date') +
+  ylab('Soil Moisture [m3/m3]') +
+  scale_color_manual(" ", values =  c("darkolivegreen3", "darkolivegreen3", "royalblue", "royalblue")) + 
+  theme(legend.position = 'None',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+smLO = ggplot(data = sm_monthly_nogaps) +
+  geom_line(aes(x = month, y = S2S_LO_SH, color = 'S2S SH')) +
+  geom_line(aes(x = month, y = S2S_LO_DP, color = 'S2S DP'), linetype = 3) + 
+  geom_line(aes(x = month, y = S2N_LO_SH, color = 'S2N SH')) +
+  geom_line(aes(x = month, y = S2N_LO_DP, color = 'S2N DP'), linetype = 3) + 
+  geom_point(aes(x = month, y = S2S_LO_SH, color = 'S2S SH')) +
+  geom_point(aes(x = month, y = S2S_LO_DP, color = 'S2S DP')) + 
+  geom_point(aes(x = month, y = S2N_LO_SH, color = 'S2N SH')) +
+  geom_point(aes(x = month, y = S2N_LO_DP, color = 'S2N DP')) + 
+  xlab('Date') +
+  ylab('Soil Moisture [m3/m3]') +
+  scale_color_manual(" ", values =  c("darkolivegreen3", "darkolivegreen3", "royalblue", "royalblue")) + 
+  theme(legend.position = 'None',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+sm_hillslopes = plot_grid(smUP, smMI, smLO, 
+          labels = c('UP', 'MI', 'LO'), 
+          align = 'hv', 
+          ncol = 1)
+save_plot(paste0(fig_save, 'sample_soilMhillslopes.pdf'), sm_hillslopes, base_height = 8)
+save_plot(paste0(fig_save, 'sample_soilMhillslopes.jpeg'), sm_hillslopes, base_height = 8)
+sm_hillslopes
+
+```
+
+```{r}
+#South Hillslope Adjacency matrix
+vars = c("S2S_UP_SH", "S2S_UP_DP", "S2S_MI_SH", "S2S_MI_DP", "S2S_LO_SH", "S2S_LO_DP")
+
+A_southhill_te = array(dim = c(length(vars), length(vars), lags))
+A_southhill_crit = array(dim = c(length(vars), length(vars), lags))
+
+for(i in seq(1, length(vars))){
+  for(j in seq(1, length(vars))){
+    #Assign variables
+    iv = vars[i]
+    jv = vars[j]
+    
+    #Loop through lags
+    for(l in seq(1, lags)){
+      #Shift data
+      shifted = lagTS(sm_monthly_nogaps[iv], sm_monthly_nogaps[jv], l = l)
+      
+      #Compute TE
+      te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
+      
+      #Add to full te list
+      A_southhill_te[i, j, l] = te$coef[1,1]
+      A_southhill_crit[i, j, l] = mean(te$boot["dtexy",]) + 1.66*sd(te$boot["dtexy",])
+    }
+  }
+}
+```
+
+```{r}
+#North Hillslope Adjacency matrix
+vars = c("S2N_UP_SH", "S2N_UP_DP", "S2N_MI_SH", "S2N_MI_DP", "S2N_LO_SH", "S2N_LO_DP")
+
+A_northhill_te = array(dim = c(length(vars), length(vars), lags))
+A_northhill_crit = array(dim = c(length(vars), length(vars), lags))
+
+for(i in seq(1, length(vars))){
+  for(j in seq(1, length(vars))){
+    #Assign variables
+    iv = vars[i]
+    jv = vars[j]
+    
+    #Loop through lags
+    for(l in seq(1, lags)){
+      #Shift data
+      shifted = lagTS(sm_monthly_nogaps[iv], sm_monthly_nogaps[jv], l = l)
+      
+      #Compute TE
+      te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
+      
+      #Add to full te list
+      A_northhill_te[i, j, l] = te$coef[1,1]
+      A_northhill_crit[i, j, l] = mean(te$boot["dtexy",]) + 1.66*sd(te$boot["dtexy",])
+    }
+  }
+}
+```
+
+```{r}
+#Calculate out significant values
+maskSouth = A_southhill_te > A_southhill_crit
+A_southhill = replace(A_southhill_te, !maskSouth, NA)
+
+maskNorth = A_northhill_te > A_northhill_crit
+A_northhill = replace(A_northhill_te, !maskNorth, NA)
+```
+
+```{r}
+#Reformatting for heatmap plotting
+#[1]"UP_SH", [2]"UP_DP", [3]"MI_SH", [4]"MI_DP", [5]"LO_SH", [6]"LO_DP"
+south_plotting = data.frame(
+  #UP_SH -> UP_DP
+  'UP_SH-UP_DP' = A_southhill[1,2,],
+  #MI_SH -> MI_DP
+  'MI_SH-MI_DP' = A_southhill[3,4,], 
+  #LO_SH -> LO_DP
+  'LO_SH-LO_DP' = A_southhill[5,6,], 
+  #UP_SH -> MI_SH
+  'UP_SH-MI_SH' = A_southhill[1,3,],
+  #MI_SH -> LO_SH
+  'MI_SH-LO_SH' = A_southhill[3,5,],
+  #UP_DP -> MI_DP
+  'UP_DP-MI_DP' = A_southhill[2,4,],
+  #MI_DP -> LO_DP
+  'MI_DP-LO_DP' = A_southhill[4,6,], 
+  'lag' = seq(1, lags)) %>%
+  melt(id.vars = 'lag')
+
+north_plotting = data.frame(
+  #UP_SH -> UP_DP
+  'UP_SH-UP_DP' = A_northhill[1,2,],
+  #MI_SH -> MI_DP
+  'MI_SH-MI_DP' = A_northhill[3,4,], 
+  #LO_SH -> LO_DP
+  'LO_SH-LO_DP' = A_northhill[5,6,], 
+  #UP_SH -> MI_SH
+  'UP_SH-MI_SH' = A_northhill[1,3,],
+  #MI_SH -> LO_SH
+  'MI_SH-LO_SH' = A_northhill[3,5,],
+  #UP_DP -> MI_DP
+  'UP_DP-MI_DP' = A_northhill[2,4,],
+  #MI_DP -> LO_DP
+  'MI_DP-LO_DP' = A_northhill[4,6,],
+  'lag' = seq(1, lags)) %>%
+  melt(id.vars = 'lag')
+```
+
+```{r}
+#Hillslope heatmaps
+#Plot
+south_heatmap = ggplot(south_plotting, aes(lag, variable)) +
+  geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+  geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+  scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white',
+                      limits = c(0.03, 0.180))+
+  theme(panel.background = element_blank()) + 
+  xlab("Time Lag [months]") + 
+  ylab(" ")
+
+north_heatmap = ggplot(north_plotting, aes(lag, variable)) +
+  geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+  geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+  scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white',
+                      limits = c(0.03, 0.180))+
+  theme(panel.background = element_blank()) + 
+  xlab("Time Lag [months]") + 
+  ylab(" ")
+
+hillslope_heatmaps = plot_grid(south_heatmap, north_heatmap, 
+          labels = c('S', 'N'), 
+          align = 'hv', 
+          ncol = 1)
+
+save_plot(paste0(fig_save, 'hillslopeheatmap.pdf'), hillslope_heatmaps, base_height = 5, base_asp = 2)
+save_plot(paste0(fig_save, 'hillslopeheatmap.jpeg'), hillslope_heatmaps, base_height = 5, base_asp = 2)
+hillslope_heatmaps
+```
+
+There continues to appear to be more information transfer in the north slope than the south slope but let's separate into line plots to see more clearly again. 
+
+```{r}
+#[1]"UP_SH", [2]"UP_DP", [3]"MI_SH", [4]"MI_DP", [5]"LO_SH", [6]"LO_DP"
+#Fill Nans for plotting
+A_southhill[is.na(A_southhill)] = 0
+A_northhill[is.na(A_northhill)] = 0
+
+#UP to MI, Shallow
+upmi_shallow = ggplot() +  
+  #south hillslope
+  geom_line(aes(x = seq(1, 18), y = A_southhill[1, 3, ],
+                color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_southhill[1, 3, ],
+                color = 'South Hillslope')) + 
+  #north hillslope
+  geom_line(aes(x = seq(1, 18), y = A_northhill[1, 3,],
+                color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_northhill[1, 3,],
+                color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue")) + 
+  labs(x = 'Lag', y = ' ', subtitle = 'Upland to Middle Hillslope, Shallow') + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#MI to LO, Shallow
+milo_shallow = ggplot() +  
+  #south hillslope
+  geom_line(aes(x = seq(1, 18), y = A_southhill[3, 5, ],
+                color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_southhill[3, 5, ],
+                color = 'South Hillslope')) + 
+  #north hillslope
+  geom_line(aes(x = seq(1, 18), y = A_northhill[3, 5, ],
+                color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_northhill[3, 5, ],
+                color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue")) + 
+  labs(x = 'Lag', y = ' ', subtitle = 'Middle to Low Hillslope, Shallow') + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#UP to MI, Deep
+upmi_deep = ggplot() +  
+  #south hillslope
+  geom_line(aes(x = seq(1, 18), y = A_southhill[2, 4, ],
+                color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_southhill[2, 4, ],
+                color = 'South Hillslope')) + 
+  #north hillslope
+  geom_line(aes(x = seq(1, 18), y = A_northhill[2, 4, ],
+                color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_northhill[2, 4, ],
+                color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue")) + 
+  labs(x = 'Lag', y = ' ', subtitle = 'Upland to Middle Hillslope, Deep') + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#MI to LO, Deep
+milo_deep = ggplot() +  
+  #south hillslope
+  geom_line(aes(x = seq(1, 18), y = A_southhill[4, 6, ],
+                color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_southhill[4, 6, ],
+                color = 'South Hillslope')) + 
+  #north hillslope
+  geom_line(aes(x = seq(1, 18), y = A_northhill[4, 6, ],
+                color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_northhill[4, 6, ],
+                color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue")) + 
+  labs(x = 'Lag', y = ' ', subtitle = 'Middle to Low Hillslope, Deep') + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+hillslope_timeseries = plot_grid(upmi_shallow, milo_shallow, upmi_deep, milo_deep,
+          labels = c('A', 'B', 'C', 'D'), 
+          align = 'hv', 
+          ncol = 2)
+save_plot(paste0(fig_save, 'hillslopetimeseries.pdf'), hillslope_timeseries, base_height = 5, base_asp = 2)
+save_plot(paste0(fig_save, 'hillslopetimeseries.jpeg'), hillslope_timeseries, base_height = 5, base_asp = 2)
+hillslope_timeseries
+
+```
+
+```{r}
+#[1]"UP_SH", [2]"UP_DP", [3]"MI_SH", [4]"MI_DP", [5]"LO_SH", [6]"LO_DP"
+#UP 
+up_infil = ggplot() +  
+  #south hillslope
+  geom_line(aes(x = seq(1, 18), y = A_southhill[1, 2, ],
+                color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_southhill[1, 2, ],
+                color = 'South Hillslope')) + 
+  #north hillslope
+  geom_line(aes(x = seq(1, 18), y = A_northhill[1, 2,],
+                color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_northhill[1, 2,],
+                color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue")) + 
+  labs(x = 'Lag', y = ' ', subtitle = 'Upland Shallow to Deep') + 
+  theme(legend.position = 'top',
+        panel.background = element_blank())
+
+#MI 
+mi_infil = ggplot() +  
+  #south hillslope
+  geom_line(aes(x = seq(1, 18), y = A_southhill[3, 4, ],
+                color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_southhill[3, 4, ],
+                color = 'South Hillslope')) + 
+  #north hillslope
+  geom_line(aes(x = seq(1, 18), y = A_northhill[3, 4, ],
+                color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_northhill[3, 4, ],
+                color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue")) + 
+  labs(x = 'Lag', y = ' ', subtitle = 'Middle Shallow to Deep') + 
+  theme(legend.position = 'None',
+        panel.background = element_blank())
+
+#UP
+lo_infil = ggplot() +  
+  #south hillslope
+  geom_line(aes(x = seq(1, 18), y = A_southhill[5, 6, ],
+                color = 'South Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_southhill[5, 6, ],
+                color = 'South Hillslope')) + 
+  #north hillslope
+  geom_line(aes(x = seq(1, 18), y = A_northhill[5, 6, ],
+                color = 'North Hillslope')) + 
+  geom_point(aes(x = seq(1, 18), y = A_northhill[5, 6, ],
+                color = 'North Hillslope')) + 
+  scale_color_manual(" ", values =  c("darkolivegreen3", "royalblue")) + 
+  labs(x = 'Lag', y = ' ', subtitle = 'Lowland Shallow to Deep') + 
+  theme(legend.position = 'None',
+        panel.background = element_blank())
+
+infiltration_timeseries = plot_grid(up_infil, mi_infil, lo_infil,
+          labels = c('A', 'B', 'C'), 
+          align = 'hv', 
+          ncol = 1)
+save_plot(paste0(fig_save, 'infiltrationtimeseries.pdf'), infiltration_timeseries, base_height = 6, base_asp = 0.8)
+save_plot(paste0(fig_save, 'infiltrationtimeseries.jpeg'), infiltration_timeseries, base_height = 6, base_asp = 0.8)
+infiltration_timeseries
 ```
 
 
