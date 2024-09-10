@@ -11,7 +11,7 @@ knitr::opts_chunk$set(echo = TRUE)
 
 ```{r}
 fig_save = "./Figures/"
-load_path = "./Data and Codes/Cleaned Data/"
+load_path = "./mef-data/"
 ```
 
 ```{r}
@@ -26,11 +26,13 @@ library(gridExtra)
 library(forecastML)
 library(cowplot)
 library(reshape2)
+library(zoo)
+library(infotheo)
 ```
 
 ### Data Import from EDI
 
-```{r}
+```{r, echo = False}
 ## Precipitation
 precipURL  <- "https://pasta.lternet.edu/package/data/eml/edi/849/5/4f7e0b3029833c26d64fda3d23037d1d" 
 precipInfile <- tempfile()
@@ -131,32 +133,45 @@ tmp1DateTime<-as.POSIXct(stream$DateTime,format="%Y-%m-%d %H:%M:%S")
 if(nrow(stream[stream$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){stream$DateTime <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
 
 
-## Air Temperature
-tempURL  <- "https://pasta.lternet.edu/package/data/eml/edi/859/4/e1e7792f8465017e133535bccbba4b6c" 
-tempInfile <- tempfile()
-try(download.file(tempURL,tempInfile,method="curl"))
-if (is.na(file.size(tempInfile))) download.file(tempURL,tempInfile,method="auto")
-temp <-read.csv(tempInfile, header=F, skip=1, sep=",", 
+## General Met Station Data
+metURL  <- "https://pasta.lternet.edu/package/data/eml/edi/859/4/e1e7792f8465017e133535bccbba4b6c" 
+metInfile <- tempfile()
+try(download.file(metURL,metInfile,method="curl"))
+if (is.na(file.size(metInfile))) download.file(metURL,metInfile,method="auto")
+met <-read.csv(metInfile, header=F, skip=1, sep=",", 
                col.names=c("TIMESTAMP", "Air_TempC_Avg", "RH",     
                     "Soil_TempC_Avg", "WS_Tot", "WindDir_D",     
                     "WindDir_SD", "PAR_Den_Avg", "Soil_VWC_Avg"),
                check.names=TRUE)
-unlink(tempInfile)                      
-tmp1DateTime<-as.POSIXct(temp$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
+unlink(metInfile)                      
+tmp1DateTime<-as.POSIXct(met$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
 # Keep the new dates only if they all converted correctly
-if(nrow(temp[temp$TIMESTAMP != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){temp$TIMESTAMP <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
+if(nrow(met[met$TIMESTAMP != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){met$TIMESTAMP <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
 
-## ET from Open ET
+## Air Temp
+tempURL  <- "https://pasta.lternet.edu/package/data/eml/edi/583/4/982d194dd32adb4419b14e936056c26c" 
+tempInfile <- tempfile()
+try(download.file(tempURL,tempInfile,method="curl"))
+if (is.na(file.size(tempInfile))) download.file(tempURL,tempInfile,method="auto")
+temp <-read.csv(tempInfile, header=F, skip=1, sep=",",  
+                col.names=c("Date", "STATION", "MAXC",
+                            "MINC", "FLAG"),
+                check.names=TRUE)
+unlink(tempInfile)
+tmp1Date<-as.Date(temp$Date,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(temp[temp$Date != "",]) == length(tmp1Date[!is.na(tmp1Date)])){temp$Date <- tmp1Date } else {print("Date conversion failed for temp$Date. Please inspect the data and do the date conversion yourself.")}                                                                    
 ```
 
+Data is then aggregated to daily timescales
+
 ```{r}
-#Data sets: stream (1962-2017), sm (2008-2023), precip (2011-2024), laggwell (2018-2020), bog (1961-2023), temp (2008-2024)
+#Data sets: stream (1962-2017), sm (2008-2023), precip (2011-2024), laggwell (2018-2020), bog (1961-2023), met (2008-2024), temp (1961-2024)
 
 #Resample precip to daily timestep
 #round dates down to week
 precip$day <- floor_date(precip$TIMESTAMP, "day")
 
-#find mean sales by week
 precip_daily = data.frame(precip %>%
   group_by(day) %>%
   summarize(South_PCP = sum(South_PCP)))
@@ -167,7 +182,6 @@ precip_daily = data.frame(precip %>%
 #round dates down to week
 laggwell$day <- floor_date(laggwell$DateTime, "day")
 
-#find mean sales by week
 laggwell_daily = data.frame(laggwell) %>%
   group_by(day, well_name) %>%
   summarize(well_elev = mean(well_elev))
@@ -176,21 +190,27 @@ laggwell_daily = data.frame(laggwell) %>%
 ```{r}
 #Resample temperature to daily timestep
 #round dates down to week
-temp$day <- floor_date(temp$TIMESTAMP, "day")
+met$day <- floor_date(met$TIMESTAMP, "day")
 
-#find mean sales by week
-temp_daily = data.frame(temp) %>%
+met_daily = data.frame(met) %>%
   group_by(day) %>%
-  summarize(AirT_C = mean(Air_TempC_Avg))
+  summarise_all(mean)
+```
 
-head(temp_daily)
+```{r}
+#Resample temperature to daily timestep
+#round dates down to week
+temp$day <- floor_date(temp$Date, "day")
+
+temp_daily = data.frame(temp) %>%
+  filter(STATION == 'S2Bog') %>%
+  mutate(MEANC = 0.5*(MAXC + MINC))
 ```
 
 ```{r}
 #Melt the lagg data so there is a column per well
 laggwell_melt = laggwell_daily %>%
   pivot_wider(names_from = 'well_name', values_from = 'well_elev')
-head(laggwell_melt)
 ```
 
 ```{r}
@@ -198,13 +218,10 @@ head(laggwell_melt)
 #round dates down to week
 sm$day <- floor_date(sm$TIMESTAMP, "day")
 
-#find mean sales by week
 sm_daily = data.frame(sm) %>%
   group_by(day) %>%
   summarise_all(mean) %>%
   select(-TIMESTAMP)
-
-head(sm_daily)
 ```
 
 ```{r}
@@ -212,12 +229,9 @@ head(sm_daily)
 #round dates down to week
 stream$day <- floor_date(stream$DateTime, "day")
 
-#find mean sales by week
 stream_daily = data.frame(stream) %>%
   group_by(day) %>%
-  summarize(qInterval = mean(q.interval)/10) 
-
-head(stream_daily)
+  summarize(qInterval = mean(q.interval)/10)
 ```
 
 Merge data into one data frame for IT analysis
@@ -228,10 +242,13 @@ dat = merge(x = precip_daily, y = bog, by.x = "day", by.y = "DATE", all = TRUE)
 dat = merge(dat, laggwell_melt, by = 'day', all = TRUE)
 dat = merge(dat, sm_daily, by = 'day', how = 'outer', all = TRUE)
 dat = merge(dat, stream_daily, by = 'day', how = 'outer', all = TRUE)
+dat = merge(dat, met_daily, by = 'day', how = 'outer', all = TRUE)
 dat = merge(dat, temp_daily, by = 'day', how = 'outer', all = TRUE)
+
 head(dat)
 ```
 
+We are now ready for gap filling and data analysis.
 
 ## Initial Plotting
 
@@ -299,6 +316,15 @@ ggplot(data = dat, aes(x = day, y = qInterval)) +
   theme(aspect.ratio = 0.3,
         panel.background = element_blank())
 
+#Air Temperature
+ggplot(data = dat, aes(x = day, y = MEANC)) +
+  geom_point(color = 'gray') + 
+  geom_line() + 
+  xlab('Date') + 
+  ylab('Mean Daily Temperature [C]') + 
+  theme(aspect.ratio = 0.3,
+        panel.background = element_blank())
+
 ```
 
 ## Clip to timescales for IT analysis
@@ -318,11 +344,8 @@ data = merge(data_clipped,
              data.frame(times = floor_date(seq(from = as.POSIXct('2011-02-03'), to = as.POSIXct('2017-02-28'), by = "day"), 'day')), 
              by.x = 'day', by.y = 'times', 
              all.y = TRUE)
-
-head(data)
-tail(data)
-  
 ```
+
 ```{r}
 
 #Precip
@@ -374,7 +397,7 @@ ggplot(data = data, aes(x = day, y = qInterval)) +
         panel.background = element_blank())
 
 #Temperature
-ggplot(data = data, aes(x = day, y = AirT_C)) + 
+ggplot(data = data, aes(x = day, y = MEANC)) + 
   geom_point(color = 'gray') + 
   geom_line() + 
   xlab('Date') + 
@@ -392,9 +415,9 @@ data$month <- floor_date(data$day, "month")
 #group by and summarize
 data_means = data %>%
    group_by(month) %>%
-   select(c(month, South_PCP, WTE, qInterval, AirT_C)) %>%
+   select(c(month, South_PCP, WTE, qInterval, MEANC)) %>%
    summarize_all(mean, na.rm = TRUE) %>%
-   rename(meanPrecip = South_PCP, meanWTE = WTE, meanQ = qInterval, meanT = AirT_C)
+   rename(meanPrecip = South_PCP, meanWTE = WTE, meanQ = qInterval, meanT = MEANC)
 
 data_totals = data %>%
    group_by(month) %>%
@@ -402,6 +425,7 @@ data_totals = data %>%
    summarize_all(sum, na.rm = TRUE) %>%
    rename(totPrecip = South_PCP, totQ = qInterval)
 
+#Currently grouping all soil data into north and south, deep and shallow resevoirs but will come back and separate these out later
 data_soils = data %>%
   mutate(S2S_SH = rowMeans(select(data, c(S2S_UP_SH, S2S_MI_SH, S2S_LO_SH)), na.rm = TRUE)) %>%
   mutate(S2S_DP = rowMeans(select(data, c(S2S_UP_DP, S2S_MI_DP, S2S_LO_DP)), na.rm = TRUE)) %>%
@@ -489,16 +513,15 @@ timeseries
 
 ```
 
-
-
 ## Gap filling of soil moisture data
+Just a linear gap fill for now because the gaps are no longer than 2 to 3 months. For the daily analysis we may need to come up with a better method.
 
 ```{r}
 data_monthly_nogaps = data_monthly %>%
   mutate(S2S_DP = na.approx(S2S_DP)) %>%
   mutate(S2S_SH = na.approx(S2S_SH)) %>%
   mutate(S2N_DP = na.approx(S2N_DP)) %>%
-  mutate(S2N_SH = na.approx(S2N_SH)) %>%
+  mutate(S2N_SH = na.approx(S2N_SH))%>%
   mutate(meanT = na.approx(meanT))
 
 summary(data_monthly_nogaps)
@@ -521,6 +544,7 @@ ggplot(data = data_monthly_nogaps) +
         aspect.ratio = 0.3, 
         panel.background = element_blank()) 
 ```
+
 ```{r}
 ggplot(data = data_monthly_nogaps) +
   geom_point(aes(x = month, y = meanPrecip, color = 'mean Precip')) +
@@ -535,6 +559,84 @@ ggplot(data = data_monthly_nogaps) +
   theme(legend.position = 'top',
         aspect.ratio = 0.3, 
         panel.background = element_blank())
+```
+One final piece of pre-analysis - taking the 5 month anomaly values. This more clearly translates any results that may be minimized or exacerbated by seasonal trends. 
+
+```{r}
+data_monthly_anomaly = data_monthly_nogaps %>%
+  mutate(across(meanPrecip:S2N_DP, ~ .x - rollmean(.x, k = 5, fill = NA, align = 'left')))
+
+
+head(data_monthly_nogaps)
+head(data_monthly_anomaly)
+```
+Plot anomalies
+
+```{r}
+#Precip
+p1 = ggplot(data = data_monthly_anomaly) +
+  geom_point(aes(x = month, y = meanPrecip, color = 'mean Precip')) +
+  geom_line(aes(x = month, y = meanPrecip, color = 'mean Precip')) +
+  geom_point(aes(x = month, y = totPrecip, color = 'total Precip')) +
+  geom_line(aes(x = month, y = totPrecip, color = 'total Precip')) +
+  geom_point(aes(x = month, y = meanT, color = 'mean Temp')) +
+  geom_line(aes(x = month, y = meanT, color = 'mean Temp')) +
+  xlab('Date') + 
+  ylab('Precipitation [cm]') + 
+  scale_color_manual(" ", values = c('gray', 'black', 'darkred')) + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+#Bog WTE
+b1 = ggplot(data = data_monthly_anomaly, aes(x = month, y = meanWTE)) + 
+  geom_point(color = 'gray') + 
+  geom_line(color = 'gray') + 
+  xlab('Date') + 
+  ylab('Bog WTE [m]') +
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank())
+
+
+#SOIL 
+s1 = ggplot(data = data_monthly_anomaly) +
+  geom_line(aes(x = month, y = S2S_SH, color = 'S2S SH')) +
+  geom_line(aes(x = month, y = S2S_DP, color = 'S2S DP'), linetype = 3) + 
+  geom_line(aes(x = month, y = S2N_SH, color = 'S2N SH')) +
+  geom_line(aes(x = month, y = S2N_DP, color = 'S2N DP'), linetype = 3) + 
+  geom_point(aes(x = month, y = S2S_SH, color = 'S2S SH')) +
+  geom_point(aes(x = month, y = S2S_DP, color = 'S2S DP')) + 
+  geom_point(aes(x = month, y = S2N_SH, color = 'S2N SH')) +
+  geom_point(aes(x = month, y = S2N_DP, color = 'S2N DP')) + 
+  xlab('Date') +
+  ylab('Soil Moisture [m3/m3]') +
+  scale_color_manual(" ", values =  c("darkolivegreen3", "darkolivegreen3", "royalblue", "royalblue")) + 
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3, 
+        panel.background = element_blank()) 
+
+#Streamflow
+q1 = ggplot(data = data_monthly_anomaly) +
+  geom_point(aes(x = month, y = meanQ, color = 'mean Q')) +
+  geom_line(aes(x = month, y = meanQ, color = 'mean Q')) +
+  geom_point(aes(x = month, y = totQ, color = 'total Q')) +
+  geom_line(aes(x = month, y = totQ, color = 'total Q')) +
+  xlab('Date') + 
+  ylab('Streamflow [cm]') + 
+  scale_color_manual(" ", values = c('gray', 'black')) +
+  theme(legend.position = 'top',
+        aspect.ratio = 0.3,
+        panel.background = element_blank())
+
+timeseries = plot_grid(p1, b1, s1, q1,
+          labels = c('A', 'B', 'C', 'D'),
+          label_size = 12,
+          align="hv")
+
+save_plot(paste0(fig_save, 'monthlydata_anomaly_timeseries.pdf'), timeseries, base_height = 5)
+save_plot(paste0(fig_save, 'monthlydata_anomaly_timeseries.jpeg'), timeseries, base_height = 5)
+timeseries
 ```
 
 
@@ -591,17 +693,22 @@ save_plot(paste0(fig_save, 'sample_laggedtimeseries.jpeg'), lagged_timeseries, b
 lagged_timeseries
 
 ```
+
+A sample of what the lagged time series looks like for the water table elevation. Note that the way the algorithm is written we are technically shifting the dependent (Y) timeseries forward in time, not the independent (X) timeseries backward in time. 
+
 ```{r}
 te = transfer_entropy(shifted$shiftedX, shifted$shiftedY, lx = lagValue, ly = lagValue)
 te
 ```
 
-Full test of a year of lags
+What this gives is a value for TE in both the forward (X -> Y) direction and the reverse direction (Y -> X) and a value for the critical threshold TE based on 100 shuffles of the time series. Then we can also do a one (or two) tailed hypothesis test for significant information flow. 
+
+We can then perform this analysis over many lags in a loop in order to find the transfer entropy flows at various time lags and eventually determine a maximum time lag for each hydrologic/information flow. 
 
 ```{r}
 #Take out the non-useful columns
-data_monthly_reduced = data_monthly_nogaps %>%
-  select(-c(month, meanPrecip, meanQ, meanT))
+data_monthly_reduced = data_monthly_anomaly %>%
+  select(-c(month, meanPrecip, meanQ))
 
 #Collect combinations of variables
 combinations_x = c("totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPrecip",
@@ -609,13 +716,15 @@ combinations_x = c("totPrecip", "totPrecip", "totPrecip", "totPrecip", "totPreci
                    "S2S_SH" , "S2S_SH", 
                    "S2N_SH" , "S2N_SH", 
                    "S2S_DP", 
-                   "S2N_DP")
+                   "S2N_DP", 
+                   "meanT", "meanT", "meanT", "meanT", "meanT", "meanT")
 combinations_y = c("meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP", 
                    "totQ",
                    "S2S_DP", "totQ", 
                    "S2N_DP", "totQ", 
                    "totQ",
-                   "totQ")
+                   "totQ", 
+                   "meanWTE", "totQ", "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP")
 ```
 
 
@@ -707,7 +816,7 @@ lag_heatmap
 
 ```{r}
 #Full Adjacency matrix
-vars = c("totPrecip", "meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP")
+vars = c("totPrecip", "meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP", "meanT")
 
 A_te = array(dim = c(length(vars), length(vars), lags))
 A_crit = array(dim = c(length(vars), length(vars), lags))
@@ -724,7 +833,7 @@ for(i in seq(1, length(vars))){
       shifted = lagTS(data_monthly_reduced[iv], data_monthly_reduced[jv], l = l)
       
       #Compute TE
-      te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
+      te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345, entropy = 'Shannon', shuffles = 300)
       
       #Add to full te list
       A_te[i, j, l] = te$coef[1,1]
@@ -749,6 +858,91 @@ A_south_sig = A_sig[c(4, 5), c(4, 5), ]
 A_north_sig = A_sig[c(6, 7), c(6, 7), ]
 ```
 
+### Process Network
+
+```{r}
+#Find lags with max information transfer
+maxLag = array(dim = c(length(vars), length(vars), 1))
+maxLagTE = array(dim = c(length(vars), length(vars), 1))
+
+for(i in 1:length(vars)){
+  for(j in 1:length(vars)){
+    if(TRUE %in% mask[i, j, ]) maxLagTE[i, j, 1]=max(A_sig[i, j, ], na.rm = TRUE) else maxLagTE[i, j, 1]=NA
+    if(TRUE %in% mask[i, j, ]) maxLag[i, j, 1]=which.max(A_sig[i, j, ]) else maxLag[i, j, 1]=NA
+  }
+}
+```
+
+At these lags we are interested in seeing if the information flows are feedback or forcing dominated. To do this we look at the mutual information between the time series at the same lag. If:
+
+- T > I then it is forcing dominated
+- T < I then it is feedback dominated
+
+```{r}
+MI = array(dim = c(length(vars), length(vars), 1))
+
+#discretize data for MI calculation
+data_monthly_discretized = discretize(data_monthly_reduced, disc="equalfreq", nbins=15)
+
+#Loop through variables - calculate the MI at the zero lag and save it 
+for(i in 1:length(vars)){
+  for(j in 1:length(vars)){
+      #Assign variables
+      iv = vars[i]
+      jv = vars[j]
+      
+      #Compute zero-lag MI and convert to base 2
+      MI[i, j, 1] = natstobits(mutinformation(data_monthly_discretized[iv], data_monthly_discretized[jv], method="emp"))
+      
+      #Compare and share
+      #if(MI[i, j, 1] > maxLagTE[i, j, 1]){
+      #  print(paste(iv, '-->', jv, 'is feedback dominated at lag', maxLag[i, j, 1], 'months'))
+      #} else{
+      #  print(paste(iv, '-->', jv, 'is forcing dominated at lag', maxLag[i, j, 1], 'months'))
+      #}
+  }
+}
+```
+
+```{r}
+#Make plots of the synchronization ratio Tz
+for(i in 1:length(vars)){
+  for(j in 1:length(vars)){
+    #Filter out data
+    te_temp = A_te[i, j, ]
+    te_crit_temp = A_crit[i, j, ]
+    mi_temp = MI[i, j, 1]
+    tz_temp = te_temp/mi_temp
+    iv = vars[i]
+    jv = vars[j]
+    
+    #Plot
+    #Create and save TE plots
+    lag_plot = ggplot() + 
+            #Transfer Entropy 
+            geom_point(aes(x = seq(1, lags), y = te_temp, color = 'TE')) + 
+            geom_line(aes(x = seq(1, lags), y = te_temp, color = 'TE')) +
+            #Critical Transfer Entropy
+            geom_point(aes(x = seq(1, lags), y = te_crit_temp, color = 'critTE')) + 
+            geom_line(aes(x = seq(1, lags), y = te_crit_temp, color = 'critTE')) +
+            #Mutual Information
+            #geom_point(aes(x = seq(1, lags), y = mi_temp, color = 'MI')) + 
+            #geom_line(aes(x = seq(1, lags), y = mi_temp, color = 'MI')) +
+            #Synchro Ratio
+            geom_point(aes(x = seq(1, lags), y = tz_temp, color = 'Tz')) + 
+            geom_line(aes(x = seq(1, lags), y = tz_temp, color = 'Tz')) +
+            scale_color_manual(" ", values =  c("darkred", "lightgrey", "royalblue")) + 
+            xlab('Lag') + 
+            ylab('Information Transfer [bits]') +
+            labs(subtitle = paste0(iv, '->', jv)) +
+            theme(aspect.ratio = 0.3, 
+                  panel.background = element_blank())
+    save_plot(paste0(fig_save, 'synchroRatioPlots/', iv, '->', jv, '-lagg-series.pdf'), lag_plot, base_height = 2, base_asp = 3)
+    save_plot(paste0(fig_save, 'synchroRatioPlots/', iv, '->', jv, '-lagg-series.jpeg'), lag_plot, base_height = 2, base_asp = 3)
+  }
+}
+
+```
 
 ```{r}
 notSig = ggplot() + 
@@ -759,6 +953,7 @@ notSig = ggplot() +
   geom_line(aes(x = seq(1, 18), y = colSums(A_watershed, dims = 2), color = 'Watershed')) +
   geom_point(aes(x = seq(1, 18), y = colSums(A_watershed, dims = 2), color = 'Watershed')) +  
   #Total information exchange in the south hillslope
+  
   geom_line(aes(x = seq(1, 18), y = colSums(A_south, dims = 2), color = 'South Hillslope')) + 
   geom_point(aes(x = seq(1, 18), y = colSums(A_south, dims = 2), color = 'South Hillslope')) +
   #Total information exchange in the north hillslope
@@ -795,12 +990,15 @@ plot_grid(notSig, Sig,
           ncol = 1)
   
 ```
+
 There is more significant information flow between soil layers on the north hillslope than the south hillslope. 
 
 The north hillslope seems to have more overall information transfer than the south hillslope, is there a signficant difference in the turnover of water on the north hillslope? This could be due to the fact that the north hillslope is south facing so there is higher ET, snow melt rates, etc. which leads to more turnover in the soil moisture
 signatures.
 
 Based on the data, the theory here is that higher soil moisture in the deeper layers on the south hillslope due to lower ET limit which simply encourages lateral runoff instead of infiltration into the deeper soil layers. If this were true, then the effect would be more pronounced at lower hillslopes and we would see input from shallow soil moisture at high elevation into shallow soil moisture at lower elevation.
+
+## Hillslope Specific Networks
 
 ```{r}
 #Group soil moisture, un-lumped by hillslope and depth, data into monthly bins for separate analysis
@@ -816,14 +1014,16 @@ sm_monthly = merge(sm_monthly,
              all.y = TRUE) %>%
   select(-c(day))
 
-head(sm_monthly)
-```
-
-```{r}
+#Gap fill
 sm_monthly_nogaps = sm_monthly %>%
    mutate(across(starts_with("S2"), ~ na.approx(.x, na.rm = FALSE))) 
 
-summary(sm_monthly_nogaps)
+#Anomaly
+sm_monthly_anomaly = sm_monthly_nogaps %>%
+  mutate(across(S2S_UP_SH:S2N_LO_DP, ~ .x - rollmean(.x, k = 5, fill = NA, align = 'left')))
+
+
+summary(sm_monthly_anomaly)
 ```
 
 
@@ -902,7 +1102,7 @@ for(i in seq(1, length(vars))){
     #Loop through lags
     for(l in seq(1, lags)){
       #Shift data
-      shifted = lagTS(sm_monthly_nogaps[iv], sm_monthly_nogaps[jv], l = l)
+      shifted = lagTS(sm_monthly_anomaly[iv], sm_monthly_anomaly[jv], l = l)
       
       #Compute TE
       te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
@@ -931,7 +1131,7 @@ for(i in seq(1, length(vars))){
     #Loop through lags
     for(l in seq(1, lags)){
       #Shift data
-      shifted = lagTS(sm_monthly_nogaps[iv], sm_monthly_nogaps[jv], l = l)
+      shifted = lagTS(sm_monthly_anomaly[iv], sm_monthly_anomaly[jv], l = l)
       
       #Compute TE
       te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
@@ -1176,6 +1376,103 @@ save_plot(paste0(fig_save, 'infiltrationtimeseries.jpeg'), infiltration_timeseri
 infiltration_timeseries
 ```
 
+## Adding snow and seasonal representation
 
+```{r}
+#Import snow data
+snow = read.csv(paste0(load_path, 'GR_ForestryLab_snow_daily.csv'), 
+                col.names = c('Date', 'maxT_F', 'minT_F', 'P_in', 'Snow_in', 'SD_in'), 
+                na.strings = c('T', 'M', 'S', 'A')
+                )
 
+#Trim to date range
+snow = merge(snow,
+             data.frame(times = floor_date(seq(from = as.POSIXct('2011-02-03'), to = as.POSIXct('2017-02-28'), by = "day"), 'day')), 
+             by.x = 'Date', by.y = 'times', 
+             all.y = TRUE) 
+
+#Aggregate
+snow$Date = as.POSIXct(snow$Date,format="%Y-%m-%d")
+snow$month = floor_date(snow$Date, "month")
+snow_monthly = snow %>%
+  group_by(month) %>%
+  select(c(P_in, Snow_in, month)) %>%
+  summarize_all(sum, na.rm = TRUE) %>%
+  rename(totPrecip = P_in, totSnow = Snow_in) %>%
+  mutate_at(vars('totPrecip', 'totSnow'), funs(. * 2.54))
+```
+
+```{r}
+summary(snow_monthly)
+```
+
+```{r}
+#Merge with gap filled monthly data and run adjacency matrix
+data_monthly_snow = merge(data_monthly_nogaps, snow_monthly[c('month', 'totSnow')], by = 'month')
+
+#Full Adjacency matrix
+vars = c("totPrecip", "meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP", "totSnow")
+
+A_te_snow = array(dim = c(length(vars), length(vars), lags))
+A_crit_snow = array(dim = c(length(vars), length(vars), lags))
+
+for(i in seq(1, length(vars))){
+  for(j in seq(1, length(vars))){
+    #Assign variables
+    iv = vars[i]
+    jv = vars[j]
+    
+    #Loop through lags
+    for(l in seq(1, lags)){
+      #Shift data
+      shifted = lagTS(data_monthly_snow[iv], data_monthly_snow[jv], l = l)
+      
+      #Compute TE
+      te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
+      
+      #Add to full te list
+      A_te_snow[i, j, l] = te$coef[1,1]
+      A_crit_snow[i, j, l] = mean(te$boot["dtexy",]) + 1.66*sd(te$boot["dtexy",])
+    }
+  }
+}
+```
+
+```{r}
+#Only significant values
+maskSnow = A_te_snow > A_crit_snow
+A_snow = replace(A_te_snow, !maskSnow, NA)
+
+#Reformatting for plotting
+#[1]"totPrecip", [2]"meanWTE", [3]"totQ",  [4]"S2S_SH", [5]"S2S_DP", [6]"S2N_SH", [7]"S2N_DP", [8]"totSnow", 
+snow_plotting = data.frame(
+  #totSnow -> meanWTE
+  'totSnow-meanWTE' = A_snow[8,2,],
+  #totSnow -> totQ
+  'totSnow-totQ' = A_snow[8,3,], 
+  #totSnow -> S2S_SH
+  'totSnow-S2S_SH' = A_snow[8,4,], 
+  #totSnow -> S2S_DP
+  'totSnow-S2S_DP' = A_snow[8,5,],
+  #totSnow -> S2N_SH
+  'totSnow-S2N_SH' = A_snow[8,6,],
+  #totSnow -> S2N_DP
+  'totSnow-S2N_DP' = A_snow[8,7,],
+  'lag' = seq(1, lags)) %>%
+  melt(id.vars = 'lag')
+```
+
+```{r}
+#Plot
+snowHeatmap = ggplot(snow_plotting, aes(lag, variable)) +
+  geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+  geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+  scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+  theme(panel.background = element_blank()) + 
+  xlab("Time Lag [months]") + 
+  ylab(" ")
+
+save_plot(paste0(fig_save, 'snowHeatmap.pdf'), snowHeatmap, base_height = 5, base_asp = 2)
+save_plot(paste0(fig_save, 'snowHeatmap.jpeg'), snowHeatmap, base_height = 5, base_asp = 2)
+```
 
