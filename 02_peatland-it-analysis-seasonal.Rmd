@@ -28,6 +28,7 @@ library(cowplot)
 library(reshape2)
 library(zoo)
 library(infotheo)
+library(stringr)
 ```
 
 ### Data Import from EDI
@@ -659,6 +660,8 @@ lagTS = function(x, y, l){
   return(dat)
 }
 ```
+
+### Sample TE and MI diagrams
 
 ```{r}
 #Calculate shifted values
@@ -1410,8 +1413,15 @@ summary(snow_monthly)
 #Merge with gap filled monthly data and run adjacency matrix
 data_monthly_snow = merge(data_monthly_nogaps, snow_monthly[c('month', 'totSnow')], by = 'month')
 
+#Take 5 month anomaly
+data_monthly_snow_anomaly = data_monthly_snow %>%
+  mutate(across(meanPrecip:totSnow, ~ .x - rollmean(.x, k = 5, fill = NA, align = 'left')))
+```
+
+
+```{r}
 #Full Adjacency matrix
-vars = c("totPrecip", "meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP", "totSnow")
+vars = c("totPrecip", "meanWTE", "totQ",  "S2S_SH", "S2S_DP", "S2N_SH", "S2N_DP", "totSnow", "meanT")
 
 A_te_snow = array(dim = c(length(vars), length(vars), lags))
 A_crit_snow = array(dim = c(length(vars), length(vars), lags))
@@ -1420,12 +1430,12 @@ for(i in seq(1, length(vars))){
   for(j in seq(1, length(vars))){
     #Assign variables
     iv = vars[i]
-    jv = vars[j]
+   jv = vars[j]
     
     #Loop through lags
     for(l in seq(1, lags)){
       #Shift data
-      shifted = lagTS(data_monthly_snow[iv], data_monthly_snow[jv], l = l)
+      shifted = lagTS(data_monthly_snow_anomaly[iv], data_monthly_snow_anomaly[jv], l = l)
       
       #Compute TE
       te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
@@ -1438,13 +1448,14 @@ for(i in seq(1, length(vars))){
 }
 ```
 
+
 ```{r}
 #Only significant values
 maskSnow = A_te_snow > A_crit_snow
 A_snow = replace(A_te_snow, !maskSnow, NA)
 
 #Reformatting for plotting
-#[1]"totPrecip", [2]"meanWTE", [3]"totQ",  [4]"S2S_SH", [5]"S2S_DP", [6]"S2N_SH", [7]"S2N_DP", [8]"totSnow", 
+#[1]"totPrecip", [2]"meanWTE", [3]"totQ",  [4]"S2S_SH", [5]"S2S_DP", [6]"S2N_SH", [7]"S2N_DP", [8]"totSnow", [9]"meanT"
 snow_plotting = data.frame(
   #totSnow -> meanWTE
   'totSnow-meanWTE' = A_snow[8,2,],
@@ -1475,4 +1486,156 @@ snowHeatmap = ggplot(snow_plotting, aes(lag, variable)) +
 save_plot(paste0(fig_save, 'snowHeatmap.pdf'), snowHeatmap, base_height = 5, base_asp = 2)
 save_plot(paste0(fig_save, 'snowHeatmap.jpeg'), snowHeatmap, base_height = 5, base_asp = 2)
 ```
+
+## Seasonal Timeseries Breakdown
+
+In order to determine the separate influences of fall vs. winter vs. spring effects we are going to try separating all of the timeseries out into 'dormant', 'snowmelt', and 'growing seasons with values during the respective seasons and 0s everywhere else to keep the data structure
+
+Dormant - JAN through APR, OCT through JAN
+Snowmelt - APR through JUL
+Growing - JUL through OCT
+
+```{r}
+#Shift column order and remove columns
+data_monthly_seasonalDecomp = data_monthly_snow_anomaly[, c(1, 4, 12, 3, 5, 6, 7, 8, 9, 10, 11)]
+
+#Segment data by adding a season column and masking data
+data_monthly_seasonalDecomp = data_monthly_seasonalDecomp %>%
+  mutate(season = ifelse(month(month) > 9 | month(month) < 4, 'dormant', ifelse(month(month) < 10 & month(month) > 6, 'growing', 'melt'))) %>%
+  rename_with(~str_c(., "_full"), meanWTE:S2N_DP) %>%
+  mutate(across(meanWTE_full:S2N_DP_full, ~ ifelse(season == 'dormant', .x, 0), .names = "{sub('full', 'dormant', col)}")) %>%
+  mutate(across(meanWTE_full:S2N_DP_full, ~ ifelse(season == 'melt', .x, 0), .names = "{sub('full', 'melt', col)}")) %>%
+  mutate(across(meanWTE_full:S2N_DP_full, ~ ifelse(season == 'growing', .x, 0), .names = "{sub('full', 'growing', col)}")) %>%
+  select(-c(meanWTE_full:S2N_DP_full, season))
+
+
+colnames(data_monthly_seasonalDecomp)
+```
+
+```{r}
+vars = c("meanQ", "totSnow", "meanWTE_dormant", "meanT_dormant", "totPrecip_dormant", "totQ_dormant", "S2S_SH_dormant", "S2S_DP_dormant",
+         "S2N_SH_dormant", "S2N_DP_dormant", "meanWTE_melt", "meanT_melt", "totPrecip_melt", "totQ_melt", "S2S_SH_melt", "S2S_DP_melt", "S2N_SH_melt",
+         "S2N_DP_melt", "meanWTE_growing", "meanT_growing", "totPrecip_growing", "totQ_growing", "S2S_SH_growing", "S2S_DP_growing", "S2N_SH_growing", "S2N_DP_growing")
+
+A_te_seasonal = array(dim = c(length(vars), length(vars), lags))
+A_crit_seasonal = array(dim = c(length(vars), length(vars), lags))
+
+for(i in seq(1, length(vars))){
+  for(j in seq(1, length(vars))){
+    #Assign variables
+    iv = vars[i]
+   jv = vars[j]
+    
+    #Loop through lags
+    for(l in seq(1, lags)){
+      #Shift data
+      shifted = lagTS(data_monthly_seasonalDecomp[iv], data_monthly_seasonalDecomp[jv], l = l)
+      
+      #Compute TE
+      te = transfer_entropy(shifted[iv], shifted[jv], quiet = TRUE, seed = 12345)
+      
+      #Add to full te list
+      A_te_seasonal[i, j, l] = te$coef[1,1]
+      A_crit_seasonal[i, j, l] = mean(te$boot["dtexy",]) + 1.66*sd(te$boot["dtexy",])
+    }
+  }
+}
+```
+
+```{r}
+#Only significant values
+maskSeasonal = A_te_seasonal > A_crit_seasonal
+A_seasonal = replace(A_te_seasonal, !maskSeasonal, NA)
+```
+
+
+```{r}
+#Try plotting by seasonal influence
+#Dormant -> Dormant A_seasonal[3:10, 3:10,]
+#Dormant -> Melt A_seasonal[3:10, 11:18,]
+#Dormant -> Growing A_seasonal[3:10, 19:26,]
+#Melt -> Melt A_seasonal[11:18, 11:18,]
+#Melt -> Growing A_seasonal[11:18, 19:26,]
+#Melt -> Dormant A_seasonal[11:18, 3:10,]
+#Growing -> Growing A_seasonal[19:26, 19:26,]
+#Growing -> Dormant A_seasonal[19:26, 3:10,]
+#Growing -> Melt A_seasonal[19:26, 11:18,]
+
+for(month1 in c('dormant', 'melt', 'growing')){
+  #Set first range
+  if(month1 == 'dormant'){
+    range1 = 3:10
+  }else if(month1 == 'melt'){
+    range1 = 11:18
+  }else{
+    range1 = 19:26
+  }
+  
+  for(month2 in c('Dormant', 'Melt', 'Growing')){
+    #Set second range
+    if(month2 == 'Dormant'){
+      range2 = 3:10
+    }else if(month2 == 'Melt'){
+      range2 = 11:18
+    }else{
+      range2 = 19:26
+    }
+    
+    #Subset
+    subsetSeasons = A_seasonal[range1, range2,]
+    
+    #[1] "meanWTE", [2]"meanT", [3]"totPrecip",  [4]"totQ", [5] "S2S_SH", [6]"S2S_DP", [7]"S2N_SH", [8]"S2N_DP"
+    subsetSeasons_plotting = data.frame(
+      'totPrecip-meanWTE' = subsetSeasons[3,1,],
+      'totPrecip-totQ' = subsetSeasons[3,4,], 
+      'totPrecip-S2S_SH' = subsetSeasons[3,5,], 
+      'totPrecip-S2S_DP' = subsetSeasons[3,6,],
+      'totPrecip-S2N_SH' = subsetSeasons[3,7,],
+      'totPrecip-S2N_DP' = subsetSeasons[3,8,],
+      'meanT-meanWTE' = subsetSeasons[2,1,],
+      'meanT-totQ' = subsetSeasons[2,4,],
+      'meanT-S2S_SH' = subsetSeasons[2,5,],
+      'meanT-S2S_DP' = subsetSeasons[2,6,],
+      'meanT-S2N_SH' = subsetSeasons[2,7,],
+      'meanT-S2N_DP' = subsetSeasons[2,8,],
+      'S2S_SH-S2S_DP' =  subsetSeasons[5,6,],
+      'S2N_SH-S2N_DP' =  subsetSeasons[7,8,],
+      'meanWTE-totQ' = subsetSeasons[1,4,],
+      'S2S_SH-totQ' = subsetSeasons[5,4,],
+      'S2S_DP-totQ' = subsetSeasons[6,4,],
+      'S2N_SH-totQ' = subsetSeasons[7,4,],
+      'S2N_DP-totQ' = subsetSeasons[8,4,],
+      'lag' = seq(1, lags)) %>%
+      melt(id.vars = 'lag')
+    
+    #Plot
+    subsetSeasons_heatmap = ggplot(subsetSeasons_plotting, aes(lag, variable)) +
+      geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+      geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+      scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+      theme(panel.background = element_blank()) + 
+      xlab("Time Lag [months]") + 
+      ylab(" ") +
+      ggtitle(paste(month1, "->", month2, "Seasons"))
+    
+    save_plot(paste0(fig_save, month1, month2, 'Heatmap.pdf'), subsetSeasons_heatmap, base_height = 5, base_asp = 2)
+    save_plot(paste0(fig_save, month1, month2, 'Heatmap.jpeg'), subsetSeasons_heatmap, base_height = 5, base_asp = 2)
+        
+  }
+}
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
