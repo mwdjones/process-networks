@@ -1785,6 +1785,194 @@ for(month1 in c('dormant', 'melt', 'growing')){
 }
 ```
 
+### Plots by effect
+
+```{r}
+dormant_range = 3:10
+
+for(month2 in c('Melt', 'Growing')){
+  #Set second range
+  if(month2 == 'Melt'){
+    range2 = 11:18
+    lags = seq(1,7)
+  }else{
+    range2 = 19:26
+    lags = seq(3,10)
+  }
+    
+  #Subset
+  subsetSeasons = A_seasonal[dormant_range, range2,]
+  
+  #Temperature subset
+  temp_dormantseason_plotting = data.frame(
+      'meanT-meanWTE' = subsetSeasons[2,1,lags],
+      'meanT-totQ' = subsetSeasons[2,4,lags],
+      'meanT-S2S_SH' = subsetSeasons[2,5,lags],
+      'meanT-S2S_DP' = subsetSeasons[2,6,lags],
+      'meanT-S2N_SH' = subsetSeasons[2,7,lags],
+      'meanT-S2N_DP' = subsetSeasons[2,8,lags],
+      'lag' = lags) %>%
+      melt(id.vars = 'lag')
+  
+  #Plot
+  subsetSeasons_slicedheatmap_temp = ggplot(temp_dormantseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+    theme(panel.background = element_blank()) + 
+    xlab("Time Lag [months]") + 
+    ylab(" ") +
+    ggtitle(paste("Dormant ->", month2, "Seasons"))
+    
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedTemp_Heatmap.pdf'), subsetSeasons_slicedheatmap_temp, base_height = 3)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedTemp_Heatmap.jpeg'), subsetSeasons_slicedheatmap_temp, base_height = 3)
+  
+  #Precip Subset
+  Precip_dormantseason_plotting = data.frame(
+      'totPrecip-meanWTE' = subsetSeasons[3,1,lags],
+      'totPrecip-totQ' = subsetSeasons[3,4,lags], 
+      'totPrecip-S2S_SH' = subsetSeasons[3,5,lags], 
+      'totPrecip-S2S_DP' = subsetSeasons[3,6,lags],
+      'totPrecip-S2N_SH' = subsetSeasons[3,7,lags],
+      'totPrecip-S2N_DP' = subsetSeasons[3,8,lags],
+      'lag' = lags) %>%
+      melt(id.vars = 'lag')
+  
+  #Plot
+  subsetSeasons_slicedheatmap_precip = ggplot(Precip_dormantseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+    theme(panel.background = element_blank()) + 
+    xlab("Time Lag [months]") + 
+    ylab(" ") +
+    ggtitle(paste("Dormant ->", month2, "Seasons"))
+    
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedPrecip_Heatmap.pdf'), subsetSeasons_slicedheatmap_precip, base_height = 3)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedPrecip_Heatmap.jpeg'), subsetSeasons_slicedheatmap_precip, base_height = 3)
+    
+  #Soils Subset
+  Soil_dormantseason_plotting = data.frame(
+      'S2S_SH-S2S_DP' =  subsetSeasons[5,6,lags],
+      'S2N_SH-S2N_DP' =  subsetSeasons[7,8,lags],
+      'S2S_SH-totQ' = subsetSeasons[5,4,lags],
+      'S2S_DP-totQ' = subsetSeasons[6,4,lags],
+      'S2N_SH-totQ' = subsetSeasons[7,4,lags],
+      'S2N_DP-totQ' = subsetSeasons[8,4,lags],
+      'meanWTE-totQ' = subsetSeasons[1,4,lags],
+      'lag' = lags) %>%
+      melt(id.vars = 'lag')
+  
+  #Plot
+  subsetSeasons_slicedheatmap_soil = ggplot(Soil_dormantseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+    theme(panel.background = element_blank()) + 
+    xlab("Time Lag [months]") + 
+    ylab(" ") +
+    ggtitle(paste("Dormant ->", month2, "Seasons"))
+    
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedSoil_Heatmap.pdf'), subsetSeasons_slicedheatmap_soil, base_height = 3)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedSoil_Heatmap.jpeg'), subsetSeasons_slicedheatmap_soil, base_height = 3)
+         
+}
+```
+
+
+```{r}
+melt_range = 11:18
+
+for(month2 in c('Dormant', 'Growing')){
+  #Set second range
+  if(month2 == 'Dormant'){
+    range2 = 3:10
+    lags = seq(4,10)
+  }else{
+    range2 = 19:26
+    lags = seq(1,4)
+  }
+    
+  #Subset
+  subsetSeasons = A_seasonal[melt_range, range2,]
+  #Temperature subset
+  temp_meltseason_plotting = data.frame(
+      'meanT-meanWTE' = subsetSeasons[2,1,lags],
+      'meanT-totQ' = subsetSeasons[2,4,lags],
+      'meanT-S2S_SH' = subsetSeasons[2,5,lags],
+      'meanT-S2S_DP' = subsetSeasons[2,6,lags],
+      'meanT-S2N_SH' = subsetSeasons[2,7,lags],
+      'meanT-S2N_DP' = subsetSeasons[2,8,lags],
+      'lag' = lags) %>%
+      melt(id.vars = 'lag')
+  
+  #Plot
+  subsetSeasons_slicedheatmap_temp = ggplot(temp_meltseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+    theme(panel.background = element_blank()) + 
+    xlab("Time Lag [months]") + 
+    ylab(" ") +
+    ggtitle(paste("melt ->", month2, "Seasons"))
+    
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedTemp_Heatmap.pdf'), subsetSeasons_slicedheatmap_temp, base_height = 3)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedTemp_Heatmap.jpeg'), subsetSeasons_slicedheatmap_temp, base_height = 3)
+  
+  #Precip Subset
+  Precip_meltseason_plotting = data.frame(
+      'totPrecip-meanWTE' = subsetSeasons[3,1,lags],
+      'totPrecip-totQ' = subsetSeasons[3,4,lags], 
+      'totPrecip-S2S_SH' = subsetSeasons[3,5,lags], 
+      'totPrecip-S2S_DP' = subsetSeasons[3,6,lags],
+      'totPrecip-S2N_SH' = subsetSeasons[3,7,lags],
+      'totPrecip-S2N_DP' = subsetSeasons[3,8,lags],
+      'lag' = lags) %>%
+      melt(id.vars = 'lag')
+  
+  #Plot
+  subsetSeasons_slicedheatmap_precip = ggplot(Precip_meltseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+    theme(panel.background = element_blank()) + 
+    xlab("Time Lag [months]") + 
+    ylab(" ") +
+    ggtitle(paste("melt ->", month2, "Seasons"))
+    
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedPrecip_Heatmap.pdf'), subsetSeasons_slicedheatmap_precip, base_height = 3)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedPrecip_Heatmap.jpeg'), subsetSeasons_slicedheatmap_precip, base_height = 3)
+    
+  #Soils Subset
+  Soil_meltseason_plotting = data.frame(
+      'S2S_SH-S2S_DP' =  subsetSeasons[5,6,lags],
+      'S2N_SH-S2N_DP' =  subsetSeasons[7,8,lags],
+      'S2S_SH-totQ' = subsetSeasons[5,4,lags],
+      'S2S_DP-totQ' = subsetSeasons[6,4,lags],
+      'S2N_SH-totQ' = subsetSeasons[7,4,lags],
+      'S2N_DP-totQ' = subsetSeasons[8,4,lags],
+      'meanWTE-totQ' = subsetSeasons[1,4,lags],
+      'lag' = lags) %>%
+      melt(id.vars = 'lag')
+  
+  #Plot
+  subsetSeasons_slicedheatmap_soil = ggplot(Soil_meltseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+    theme(panel.background = element_blank()) + 
+    xlab("Time Lag [months]") + 
+    ylab(" ") +
+    ggtitle(paste("melt ->", month2, "Seasons"))
+    
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedSoil_Heatmap.pdf'), subsetSeasons_slicedheatmap_soil, base_height = 3)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedSoil_Heatmap.jpeg'), subsetSeasons_slicedheatmap_soil, base_height = 3)
+        
+}
+```
+
+
+
 ## Cross-check some high TE values with lag plots
 
 ```{r}
@@ -1819,6 +2007,7 @@ plotLag = function(x_seasonal, y_seasonal, x_full, y_full, lag, xlabel, ylabel){
 }
 ```
 
+### Lag Plots
 ```{r}
 #Growing to Melt Season 
 
