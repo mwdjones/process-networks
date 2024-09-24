@@ -29,6 +29,7 @@ library(reshape2)
 library(zoo)
 library(infotheo)
 library(stringr)
+library(latex2exp)
 ```
 
 ### Data Import from EDI
@@ -666,6 +667,7 @@ lagTS = function(x, y, l){
 ```{r}
 #Calculate shifted values
 shifted = lagTS(data_monthly$totPrecip, data_monthly$meanWTE, l = 3)
+shifted_6months = lagTS(data_monthly$totPrecip, data_monthly$meanWTE, l = 6)
 
 #Test plot lagged time series
 b2 = ggplot() + 
@@ -673,6 +675,8 @@ b2 = ggplot() +
   geom_line(data = data_monthly, aes(x = month, y = meanWTE), color = 'lightblue') +
   geom_point(data = shifted, aes(x = data_monthly$month[1:70], y = shiftedY), color = 'royalblue') + 
   geom_line(data = shifted, aes(x = data_monthly$month[1:70], y = shiftedY), color = 'royalblue') +
+  geom_point(data = shifted_6months, aes(x = data_monthly$month[1:67], y = shiftedY), color = 'darkblue') + 
+  geom_line(data = shifted_6months, aes(x = data_monthly$month[1:67], y = shiftedY), color = 'darkblue') +
   xlab('Date') + 
   ylab('Mean Bog WTE [m]') +
   theme(aspect.ratio = 0.3, 
@@ -696,6 +700,162 @@ save_plot(paste0(fig_save, 'sample_laggedtimeseries.jpeg'), lagged_timeseries, b
 lagged_timeseries
 
 ```
+
+```{r}
+#Sample PDF distributions
+preEntropy = round(entropy(discretize(data_monthly$meanWTE)), 2)
+Entropy_3mo = round(entropy(discretize(shifted$shiftedY)), 2)
+yEntropy_3mo = round(entropy(discretize(shifted$shiftedX)), 2)
+Entropy_6mo = round(entropy(discretize(shifted_6months$shiftedY)), 2)
+yEntropy_6mo = round(entropy(discretize(shifted_6months$shiftedX)), 2)
+
+a1 = ggplot() + 
+  geom_freqpoly(data = data_monthly, aes(x = meanWTE, after_stat(density)), color = 'lightblue', bins = 15, size = 1) + 
+  geom_freqpoly(data = shifted, aes(x = shiftedY, after_stat(density)), color = 'royalblue', bins = 15, size = 1) +
+  geom_freqpoly(data = shifted_6months, aes(x = shiftedY, after_stat(density)), color = 'darkblue', bins = 15, size = 1) +
+  ylab('Density') + 
+  xlab('Mean Bog WTE [m]') +
+  ggtitle(TeX(sprintf("$H_{pre}$ = %0.2f, $H_{3mo}$ = %0.2f, $H_{6mo}$ = %0.2f", preEntropy, Entropy_3mo, Entropy_6mo))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+b1 = ggplot() + 
+  geom_freqpoly(data = data_monthly, aes(x = totPrecip, after_stat(density)), color = 'gray', bins = 15, size = 1) + 
+  ylab('Density') + 
+  xlab('Total Precip [cm]') +
+  ggtitle(TeX(sprintf("$H_{y}$ = %0.2f", yEntropy))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+histograms = plot_grid(a1, b1, 
+          labels = c('A', 'B'), 
+          align = 'hv', 
+          ncol = 2)
+save_plot(paste0(fig_save, 'sample_histogramtimeseries.pdf'), histograms, base_height = 5)
+save_plot(paste0(fig_save, 'sample_histogramtimeseries.jpeg'), histograms, base_height = 5)
+
+histograms
+```
+
+
+```{r}
+#bivariate plots of pre-shifted and shifted
+preMI = round(mutinformation(discretize(data_monthly$totPrecip), discretize(data_monthly$meanWTE)), 2)
+MI_3mo = round(mutinformation(discretize(shifted$shiftedX), discretize(shifted$shiftedY)), 2)
+MI_6mo = round(mutinformation(discretize(shifted_6months$shiftedX), discretize(shifted_6months$shiftedY)), 2)
+preTE = transfer_entropy(discretize(data_monthly$totPrecip), discretize(data_monthly$meanWTE), lx = lagValue, ly = lagValue)$coef[1,1]
+TE_3mo = transfer_entropy(shifted$shiftedX, shifted$shiftedY, lx = lagValue, ly = lagValue)$coef[1,1]
+TE_6mo = transfer_entropy(shifted_6months$shiftedX, shifted_6months$shiftedY, lx = lagValue, ly = lagValue)$coef[1,1]
+
+p1 = ggplot() + 
+  geom_point(data = data_monthly, aes(x = totPrecip, y = meanWTE), color = 'lightblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{pre}$ = %0.2f, $TE_{pre}$ = %0.2f", preMI, preTE))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+p2 = ggplot() + 
+  geom_point(data = shifted, aes(x = shiftedX, y = shiftedY), color = 'royalblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{3mo}$ = %0.2f, $TE_{3mo}$ = %0.2f", MI_3mo, TE_3mo))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+p3 = ggplot() + 
+  geom_point(data = shifted_6months, aes(x = shiftedX, y = shiftedY), color = 'darkblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{6mo}$ = %0.2f, $TE_{6mo}$ = %0.2f", MI_6mo, TE_6mo))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+bivariate_lag = plot_grid(p1, p2, p3, 
+          labels = c('A', 'B', 'C'),
+          align = 'hv',
+          nrow = 1)
+save_plot(paste0(fig_save, 'sample_bivariate.pdf'), bivariate_lag, base_height = 5)
+save_plot(paste0(fig_save, 'sample_bivariate.jpeg'), bivariate_lag, base_height = 5)
+
+bivariate_lag
+```
+
+```{r}
+#bivariate plots of pre-shifted and shifted at various look back periods
+#Lookback two months
+preTE_2moLookback = transfer_entropy(discretize(data_monthly$totPrecip), discretize(data_monthly$meanWTE), lx = 2, ly = 2)$coef[1,1]
+TE_3mo_2moLookback = transfer_entropy(shifted$shiftedX, shifted$shiftedY, lx = 2, ly = 2)$coef[1,1]
+TE_6mo_2moLookback = transfer_entropy(shifted_6months$shiftedX, shifted_6months$shiftedY, lx = 2, ly = 2)$coef[1,1]
+
+#Lookback three months
+preTE_3moLookback = transfer_entropy(discretize(data_monthly$totPrecip), discretize(data_monthly$meanWTE), lx = 3, ly = 3)$coef[1,1]
+TE_3mo_3moLookback = transfer_entropy(shifted$shiftedX, shifted$shiftedY, lx = 3, ly = 3)$coef[1,1]
+TE_6mo_3moLookback = transfer_entropy(shifted_6months$shiftedX, shifted_6months$shiftedY, lx = 3, ly = 3)$coef[1,1]
+
+
+p1.1 = ggplot() + 
+  geom_point(data = data_monthly, aes(x = totPrecip, y = meanWTE), color = 'lightblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{pre}$ = %0.2f, $TE_{pre}$ = %0.2f", preMI, preTE_2moLookback))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+p2.1 = ggplot() + 
+  geom_point(data = shifted, aes(x = shiftedX, y = shiftedY), color = 'royalblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{3mo}$ = %0.2f, $TE_{3mo}$ = %0.2f", MI_3mo, TE_3mo_2moLookback))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+p3.1 = ggplot() + 
+  geom_point(data = shifted_6months, aes(x = shiftedX, y = shiftedY), color = 'darkblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{6mo}$ = %0.2f, $TE_{6mo}$ = %0.2f", MI_6mo, TE_6mo_2moLookback))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+p1.2 = ggplot() + 
+  geom_point(data = data_monthly, aes(x = totPrecip, y = meanWTE), color = 'lightblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{pre}$ = %0.2f, $TE_{pre}$ = %0.2f", preMI, preTE_3moLookback))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+p2.2 = ggplot() + 
+  geom_point(data = shifted, aes(x = shiftedX, y = shiftedY), color = 'royalblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{3mo}$ = %0.2f, $TE_{3mo}$ = %0.2f", MI_3mo, TE_3mo_3moLookback))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+p3.2 = ggplot() + 
+  geom_point(data = shifted_6months, aes(x = shiftedX, y = shiftedY), color = 'darkblue') + 
+  xlab('Total Precip [cm]') + 
+  ylab('Mean Bog WTE [m]') +
+  labs(subtitle = TeX(sprintf("$MI_{6mo}$ = %0.2f, $TE_{6mo}$ = %0.2f", MI_6mo, TE_6mo_3moLookback))) + 
+  theme(aspect.ratio = 0.7, 
+        panel.background = element_blank())
+
+bivariate_lag_lookback = plot_grid(p1, p2, p3, #original plots
+                          p1.1, p2.1, p3.1, 
+                          p1.2, p2.2, p3.2,
+          #labels = c('A', 'B', 'C', 'A.1', 'B.1', 'C.1', 'A.2', 'B.2', 'C.2'),
+          align = 'hv',
+          nrow = 3, 
+          ncol = 3)
+save_plot(paste0(fig_save, 'sample_bivariate_lookback.pdf'), bivariate_lag_lookback, base_height = 6)
+save_plot(paste0(fig_save, 'sample_bivariate_lookback.jpeg'), bivariate_lag_lookback, base_height = 6)
+
+bivariate_lag_lookback
+
+```
+
 
 A sample of what the lagged time series looks like for the water table elevation. Note that the way the algorithm is written we are technically shifting the dependent (Y) timeseries forward in time, not the independent (X) timeseries backward in time. 
 
@@ -1524,7 +1684,7 @@ for(i in seq(1, length(vars))){
   for(j in seq(1, length(vars))){
     #Assign variables
     iv = vars[i]
-   jv = vars[j]
+    jv = vars[j]
     
     #Loop through lags
     for(l in seq(1, lags)){
@@ -1625,13 +1785,354 @@ for(month1 in c('dormant', 'melt', 'growing')){
 }
 ```
 
+## Cross-check some high TE values with lag plots
+
+```{r}
+#Function to plot any correlation lag plot
+plotLag = function(x_seasonal, y_seasonal, x_full, y_full, lag, xlabel, ylabel){
+  #Lag timeseries (x stays the same, y gets shifted back the lag amount)
+  shifted_seasonal = lagTS(x_seasonal, y_seasonal, l = lag)
+  shifted_full = lagTS(x_full, y_full, l = lag)
+  
+  #Calc values
+  lagMI = round(mutinformation(discretize(shifted_seasonal$shiftedX), discretize(shifted_seasonal$shiftedY)), 2)
+  lagTE = transfer_entropy(shifted_seasonal$shiftedX, shifted_seasonal$shiftedY,
+                           lx = lagValue, ly = lagValue, quiet = TRUE, seed = 12345)$coef[1,1]
+  
+  #Make zeros NaN
+  #x[x == 0] = NA
+  #y[y == 0] = NA
+
+  #Plot
+  plotLag = ggplot() + 
+    #Whole timeseries
+    geom_point(aes(x = shifted_full$shiftedX, y = shifted_full$shiftedY), color = 'lightblue') +
+    #Just seasonal timeseries
+    geom_point(aes(x = shifted_seasonal$shiftedX, y = shifted_seasonal$shiftedY), color = 'black') + 
+    xlab(xlabel) + 
+    ylab(ylabel) +
+    ggtitle(TeX(sprintf("$MI$ = %0.2f, $TE$ = %0.2f", lagMI, lagTE))) + 
+    theme(aspect.ratio = 0.7, 
+          panel.background = element_blank())
+  
+  return(plotLag)
+}
+```
+
+```{r}
+#Growing to Melt Season 
+
+#Growing Temp -> Melt Soil Moisture S2N SH
+S2N_SH_l7 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 7, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l8 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_melt,
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 8, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l9 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 9, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l10 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 10, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+#Growing Temp -> Melt Soil Moisture S2N DP
+S2N_DP_l7 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,
+        lag = 7, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l8 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,
+        lag = 8, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l9 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 9, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l10 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 10, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
 
 
+#Growing Temp -> Melt Soil Moisture S2S SH
+S2S_SH_l7 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH, 
+        lag = 7, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l8 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH, 
+        lag = 8, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l9 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,  
+        lag = 9, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l10 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,  
+        lag = 10, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
 
 
+#Growing Temp -> Melt Soil Moisture S2S DP
+S2S_DP_l7 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 7, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l8 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 8, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l9 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,  
+        lag = 9, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l10 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_melt, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,  
+        lag = 10, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
 
 
+growing_melt_plots = plot_grid(S2N_SH_l7, S2N_SH_l8, S2N_SH_l9, S2N_SH_l10,
+                               S2N_DP_l7, S2N_DP_l8, S2N_DP_l9, S2N_DP_l10,
+                               S2S_SH_l7, S2S_SH_l8, S2S_SH_l9, S2S_SH_l10,
+                               S2S_DP_l7, S2S_DP_l8, S2S_DP_l9, S2S_DP_l10,
+          labels = c('Lag 7', 'Lag 8', 'Lag 9', 'Lag 10'), 
+          align = 'hv', 
+          nrow = 4, ncol = 4)
 
+save_plot(paste0(fig_save, 'growingMelt_lagPlots.pdf'), growing_melt_plots, base_height = 12, base_asp = 1)
+save_plot(paste0(fig_save, 'growingMelt_lagPlots.jpeg'), growing_melt_plots, base_height = 12, base_asp = 1)
+
+growing_melt_plots
+```
+
+```{r}
+#Growing to Dormant Season 
+
+#Growing Temp -> Dormant Soil Moisture S2N SH
+S2N_SH_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_dormant,
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l5 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 5, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+#Growing Temp -> Melt Soil Moisture S2N DP
+S2N_DP_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l5 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 5, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+
+#Growing Temp -> Melt Soil Moisture S2S SH
+S2S_SH_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH, 
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH, 
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,  
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l5 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,  
+        lag = 5, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+
+#Growing Temp -> Melt Soil Moisture S2S DP
+S2S_DP_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,  
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l5 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_growing, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_dormant, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,  
+        lag = 5, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+
+growing_dormant_plots = plot_grid(S2N_SH_l2, S2N_SH_l3, S2N_SH_l4, S2N_SH_l5,
+                               S2N_DP_l2, S2N_DP_l3, S2N_DP_l4, S2N_DP_l5,
+                               S2S_SH_l2, S2S_SH_l3, S2S_SH_l4, S2S_SH_l5,
+                               S2S_DP_l2, S2S_DP_l3, S2S_DP_l4, S2S_DP_l5,
+          labels = c('Lag 2', 'Lag 3', 'Lag 4', 'Lag 5'), 
+          align = 'hv', 
+          nrow = 4, ncol = 4)
+
+save_plot(paste0(fig_save, 'growingDormant_lagPlots.pdf'), growing_dormant_plots, base_height = 12, base_asp = 1)
+save_plot(paste0(fig_save, 'growingDormant_lagPlots.jpeg'), growing_dormant_plots, base_height = 12, base_asp = 1)
+
+growing_dormant_plots
+```
+
+```{r}
+#Melt to Growing Season 
+
+#Melt Temp -> Growing Soil Moisture S2N SH
+S2N_SH_l1 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 1, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_growing,
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+S2N_SH_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_SH_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Shallow Soil Moist')
+
+
+#Growing Temp -> Melt Soil Moisture S2N DP
+
+S2N_DP_l1 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 1, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+S2N_DP_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2N_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 North Deep Soil Moist')
+
+#Growing Temp -> Melt Soil Moisture S2S SH
+
+S2S_SH_l1 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,  
+        lag = 1, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH, 
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH, 
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+S2S_SH_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_SH_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_SH,  
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Shallow Soil Moist')
+
+
+#Growing Temp -> Melt Soil Moisture S2S DP
+
+S2S_DP_l1 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,  
+        lag = 1, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l2 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 2, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l3 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP, 
+        lag = 3, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+S2S_DP_l4 = plotLag(x_seasonal = data_monthly_seasonalDecomp$meanT_melt, y_seasonal = data_monthly_seasonalDecomp$S2S_DP_growing, 
+                    x_full = data_monthly_snow_anomaly$meanT, y_full = data_monthly_snow_anomaly$S2N_DP,  
+        lag = 4, 
+        xlabel = 'Temperature [C]', ylabel = 'S2 South Deep Soil Moist')
+
+
+melt_growing_plots = plot_grid(S2N_SH_l1, S2N_SH_l2, S2N_SH_l3, S2N_SH_l4,
+                               S2N_DP_l1, S2N_DP_l2, S2N_DP_l3, S2N_DP_l4,
+                               S2S_SH_l1, S2S_SH_l2, S2S_SH_l3, S2S_SH_l4,
+                               S2S_DP_l1, S2S_DP_l2, S2S_DP_l3, S2S_DP_l4,
+          labels = c('Lag 1', 'Lag 2', 'Lag 3', 'Lag 4'), 
+          align = 'hv', 
+          nrow = 4, ncol = 4)
+
+save_plot(paste0(fig_save, 'meltGrowing_lagPlots.pdf'), melt_growing_plots, base_height = 12, base_asp = 1)
+save_plot(paste0(fig_save, 'meltGrowing_lagPlots.jpeg'), melt_growing_plots, base_height = 12, base_asp = 1)
+
+melt_growing_plots
+```
 
 
 
