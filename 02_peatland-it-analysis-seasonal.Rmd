@@ -1816,20 +1816,21 @@ for(month2 in c('Melt', 'Growing')){
   
   #Plot
   subsetSeasons_slicedheatmap_temp = ggplot(temp_dormantseason_plotting, aes(lag, variable)) +
-    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_tile(aes(fill = value, height = 1, width = 1), color = 'lightgray', lwd = 0.5, linetype = 1) +
     geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
     scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white', 
-                        limit = c(0, 0.25))+
+                         limit = c(0, 0.25))+
+    coord_fixed(ratio=1) +
     theme(panel.background = element_blank()) + 
     xlab("Time Lag [months]") + 
     ylab(" ") +
-    ggtitle(paste("Dormant ->", month2, "Seasons"))
+    ggtitle(paste("Dormant ->", month2, "Seasons")) 
     
-  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedTemp_Heatmap.pdf'), subsetSeasons_slicedheatmap_temp, base_height = 3)
-  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedTemp_Heatmap.jpeg'), subsetSeasons_slicedheatmap_temp, base_height = 3)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedTemp_Heatmap.pdf'), subsetSeasons_slicedheatmap_temp)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedTemp_Heatmap.jpeg'), subsetSeasons_slicedheatmap_temp)
   
   #Precip Subset
-  Precip_dormantseason_plotting = data.frame(
+  precip_dormantseason_plotting = data.frame(
       'totPrecip-meanWTE' = subsetSeasons[3,1,lags],
       'totPrecip-totQ' = subsetSeasons[3,4,lags], 
       'totPrecip-S2S_SH' = subsetSeasons[3,5,lags], 
@@ -1840,21 +1841,22 @@ for(month2 in c('Melt', 'Growing')){
       melt(id.vars = 'lag')
   
   #Plot
-  subsetSeasons_slicedheatmap_precip = ggplot(Precip_dormantseason_plotting, aes(lag, variable)) +
-    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
-    geom_text(aes(label = round(value, 2)), size = 3, color ='white', 
-              limit = c(0, 0.25)) +
-    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+  subsetSeasons_slicedheatmap_precip = ggplot(precip_dormantseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value, height = 1, width = 1), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white', 
+                        limit = c(0, 0.25))+
+    coord_fixed(ratio=1) +
     theme(panel.background = element_blank()) + 
     xlab("Time Lag [months]") + 
     ylab(" ") +
     ggtitle(paste("Dormant ->", month2, "Seasons"))
     
-  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedPrecip_Heatmap.pdf'), subsetSeasons_slicedheatmap_precip, base_height = 3)
-  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedPrecip_Heatmap.jpeg'), subsetSeasons_slicedheatmap_precip, base_height = 3)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedPrecip_Heatmap.pdf'), subsetSeasons_slicedheatmap_precip)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedPrecip_Heatmap.jpeg'), subsetSeasons_slicedheatmap_precip)
     
   #Soils Subset
-  Soil_dormantseason_plotting = data.frame(
+  soil_dormantseason_plotting = data.frame(
       'S2S_SH-S2S_DP' =  subsetSeasons[5,6,lags],
       'S2N_SH-S2N_DP' =  subsetSeasons[7,8,lags],
       'S2S_SH-totQ' = subsetSeasons[5,4,lags],
@@ -1866,18 +1868,19 @@ for(month2 in c('Melt', 'Growing')){
       melt(id.vars = 'lag')
   
   #Plot
-  subsetSeasons_slicedheatmap_soil = ggplot(Soil_dormantseason_plotting, aes(lag, variable)) +
-    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
-    geom_text(aes(label = round(value, 2)), size = 3, color ='white', 
-              limit = c(0, 0.25)) +
-    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white')+
+  subsetSeasons_slicedheatmap_soil = ggplot(soil_dormantseason_plotting, aes(lag, variable)) +
+    geom_tile(aes(fill = value, height = 1, width = 1), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
+    scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white', 
+                        limit = c(0, 0.25))+
+    coord_fixed(ratio=1) +
     theme(panel.background = element_blank()) + 
     xlab("Time Lag [months]") + 
     ylab(" ") +
     ggtitle(paste("Dormant ->", month2, "Seasons"))
     
-  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedSoil_Heatmap.pdf'), subsetSeasons_slicedheatmap_soil, base_height = 3)
-  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedSoil_Heatmap.jpeg'), subsetSeasons_slicedheatmap_soil, base_height = 3)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedSoil_Heatmap.pdf'), subsetSeasons_slicedheatmap_soil)
+  save_plot(paste0(fig_save, 'Dormant', month2, 'SlicedSoil_Heatmap.jpeg'), subsetSeasons_slicedheatmap_soil)
          
 }
 ```
@@ -1911,17 +1914,18 @@ for(month2 in c('Dormant', 'Growing')){
   
   #Plot
   subsetSeasons_slicedheatmap_temp = ggplot(temp_meltseason_plotting, aes(lag, variable)) +
-    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_tile(aes(fill = value, height = 1, width = 1), color = 'lightgray', lwd = 0.5, linetype = 1) +
     geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
     scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white', 
                         limit = c(0, 0.25))+
+    coord_fixed(ratio=1) +
     theme(panel.background = element_blank()) + 
     xlab("Time Lag [months]") + 
     ylab(" ") +
     ggtitle(paste("melt ->", month2, "Seasons"))
     
-  save_plot(paste0(fig_save, 'melt', month2, 'SlicedTemp_Heatmap.pdf'), subsetSeasons_slicedheatmap_temp, base_height = 3)
-  save_plot(paste0(fig_save, 'melt', month2, 'SlicedTemp_Heatmap.jpeg'), subsetSeasons_slicedheatmap_temp, base_height = 3)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedTemp_Heatmap.pdf'), subsetSeasons_slicedheatmap_temp)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedTemp_Heatmap.jpeg'), subsetSeasons_slicedheatmap_temp)
   
   #Precip Subset
   Precip_meltseason_plotting = data.frame(
@@ -1936,17 +1940,18 @@ for(month2 in c('Dormant', 'Growing')){
   
   #Plot
   subsetSeasons_slicedheatmap_precip = ggplot(Precip_meltseason_plotting, aes(lag, variable)) +
-    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_tile(aes(fill = value, height = 1, width = 1), color = 'lightgray', lwd = 0.5, linetype = 1) +
     geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
     scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white', 
                         limit = c(0, 0.25))+
+    coord_fixed(ratio=1) +
     theme(panel.background = element_blank()) + 
     xlab("Time Lag [months]") + 
     ylab(" ") +
     ggtitle(paste("melt ->", month2, "Seasons"))
     
-  save_plot(paste0(fig_save, 'melt', month2, 'SlicedPrecip_Heatmap.pdf'), subsetSeasons_slicedheatmap_precip, base_height = 3)
-  save_plot(paste0(fig_save, 'melt', month2, 'SlicedPrecip_Heatmap.jpeg'), subsetSeasons_slicedheatmap_precip, base_height = 3)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedPrecip_Heatmap.pdf'), subsetSeasons_slicedheatmap_precip)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedPrecip_Heatmap.jpeg'), subsetSeasons_slicedheatmap_precip)
     
   #Soils Subset
   Soil_meltseason_plotting = data.frame(
@@ -1962,17 +1967,18 @@ for(month2 in c('Dormant', 'Growing')){
   
   #Plot
   subsetSeasons_slicedheatmap_soil = ggplot(Soil_meltseason_plotting, aes(lag, variable)) +
-    geom_tile(aes(fill = value), color = 'lightgray', lwd = 0.5, linetype = 1) +
+    geom_tile(aes(fill = value, height = 1, width = 1), color = 'lightgray', lwd = 0.5, linetype = 1) +
     geom_text(aes(label = round(value, 2)), size = 3, color ='white') +
     scale_fill_gradient("Transfer Entropy", low = "lightblue", high = "deepskyblue4", na.value = 'white', 
                         limit = c(0, 0.25))+
+    coord_fixed(ratio=1) +
     theme(panel.background = element_blank()) + 
     xlab("Time Lag [months]") + 
     ylab(" ") +
     ggtitle(paste("melt ->", month2, "Seasons"))
     
-  save_plot(paste0(fig_save, 'melt', month2, 'SlicedSoil_Heatmap.pdf'), subsetSeasons_slicedheatmap_soil, base_height = 3)
-  save_plot(paste0(fig_save, 'melt', month2, 'SlicedSoil_Heatmap.jpeg'), subsetSeasons_slicedheatmap_soil, base_height = 3)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedSoil_Heatmap.pdf'), subsetSeasons_slicedheatmap_soil)
+  save_plot(paste0(fig_save, 'melt', month2, 'SlicedSoil_Heatmap.jpeg'), subsetSeasons_slicedheatmap_soil)
         
 }
 ```
