@@ -30,6 +30,7 @@ library(zoo)
 library(infotheo)
 library(stringr)
 library(latex2exp)
+library(Hmisc)
 ```
 
 ### Data Import from EDI
@@ -2338,6 +2339,191 @@ melt_growing_plots
 
 
 
+
+
+
+
+
+## Seasonal Monthly Mutual Information
+
+```{r}
+data_monthly_nogaps = data_monthly_nogaps %>%
+  rename(date = month) %>%
+  mutate(mon = month(date)) %>%
+  select(-c('meanPrecip', 'meanQ')) %>%
+  relocate(c("totQ", "mon"))
+
+head(data_monthly_nogaps)
+```
+
+```{r}
+for(i in seq(0, 10)){
+  par(mfrow = c(2, 4), 
+      pty = "s")
+  
+  #Correlation plots
+  for(c in seq(4, 10)){
+    lagDat = lagTS(data_monthly_nogaps[, c], data_monthly_nogaps$totQ, i)
+  
+    plot(x = lagDat[, 1], y = lagDat[, 2], 
+         xlab = colnames(data_monthly_nogaps)[c], 
+         ylab = 'Total Monthly Streamflow')
+  }
+  
+  mtext(paste0(i, " Month Time Lag"), side = 3, line = -2, outer = TRUE)
+
+}
+```
+
+```{r}
+nbins = 30 
+
+calc_seasonalQ_contribution_noConditional = function(var, lag){
+    dat = c()
+    
+    #Lag timeseries
+    lagDat = lagTS(data_monthly_nogaps[, var], data_monthly_nogaps$totQ, lag)
+        
+    #Attach monthly values
+    lagDat = cbind(lagDat, month = data_monthly_nogaps$mon[0:(length(data_monthly_nogaps$mon)-lag)])
+        
+    for(i in seq(1, 12)){
+        #filter
+        lagDat_monthly = lagDat %>% filter(month == i)  
+
+        #calculate mutual information
+        dat = append(dat, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX, nbins = nbins),
+                                          Y = discretize(lagDat_monthly$shiftedY, nbins = nbins))))
+    }
+    
+    return(dat)
+}
+
+calc_seasonalQ_contribution_Conditional = function(var, lag){
+    dat = c()
+    
+    #Lag timeseries
+    lagDat = lagTS(data_monthly_nogaps[, var], data_monthly_nogaps$totQ, lag)
+    
+    #Lag autocorrelation
+    lagY = lagTS(data_monthly_nogaps$totQ, data_monthly_nogaps$totQ, lag-1)
+        
+    #Attach monthly values
+    lagDat = cbind(lagDat, month = data_monthly_nogaps$mon[0:(length(data_monthly_nogaps$mon)-lag)],
+                   z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)])
+    
+    for(i in seq(1, 12)){
+        #filter
+        lagDat_monthly = lagDat %>% filter(month == i)  
+
+        #calculate mutual information
+        dat = append(dat, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX, nbins = nbins),
+                                          Y = discretize(lagDat_monthly$shiftedY, nbins = nbins), 
+                                          S = discretize(lagDat_monthly$z, nbins = nbins))))
+    }
+    
+    return(dat)
+}
+
+
+```
+
+```{r}
+vars = c('meanT', 'totPrecip', 'meanWTE', 'S2S_SH', 'S2S_DP', 'S2N_SH', 'S2N_DP')
+
+for(lag in seq(1, 6)){
+  monthly_MI_data = data.frame(matrix(ncol = 0, nrow = 12))
+  
+  for(v in vars){
+    monthly_MI_data[v] = calc_seasonalQ_contribution_noConditional(v, lag)
+  }
+  
+  #Plot stacked time series
+  monthly_MI_data = monthly_MI_data %>% 
+    mutate(month = c(1:12)) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot = ggplot(data = monthly_MI_data, aes(x = month, y = value, fill = variable)) +
+    geom_area() +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(0,4) +
+    xlim(1,12) +
+    xlab('Month') + 
+    ylab('Mutual Information') +
+    ggtitle(paste0('Monthly Mutual Information, t = ', lag, ', l = none')) +
+    theme(panel.background = element_blank()) + 
+    scale_x_continuous(n.breaks=12)
+  print(monthlyplot)
+}
+```
+
+```{r}
+buff = 0.2
+
+for(lag in seq(1, 6)){
+  monthly_MI_data = data.frame(matrix(ncol = 0, nrow = 12))
+  
+  for(v in vars){
+    monthly_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:12)
+  months = c(x[(lag+1):length(x)],x[1:(lag+1)-1])
+  monthly_MI_data = monthly_MI_data %>% 
+    mutate(month = months) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot = ggplot(data = monthly_MI_data, aes(x = month, y = value, fill = variable)) +
+    #Label Seasons first
+    #4, (4-lag)%%12
+    #7, (7-lag)%%12
+    #10, (10-lag)%%12
+    geom_vline(xintercept = 4, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 4+buff, label="Melt Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 7, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 7+buff, label="Growing Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 10, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 10+buff, label="Snow Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    #Plot
+    geom_area() +
+    scale_fill_brewer(palette = "BrBG") + 
+    xlim(1,12) +
+    ylim(0, 4) + 
+    xlab('Month') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) + 
+    scale_x_continuous(n.breaks=12) 
+  
+  streamplot = ggplot(data = data_clipped, aes(x = yday(day), y = qInterval)) +
+    stat_summary(fun = mean, geom = 'smooth', color = 'grey') + 
+    ylim(0, 0.002) +
+    xlim(0, 365) +
+    xlab('Day of Year') + 
+    ylab('Streamflow (m)') +
+    ggtitle(paste0('Monthly Conditional Information, t = ', lag, ', l = 1')) +
+    theme(panel.background = element_blank()) 
+    
+  fullplot = plot_grid(streamplot, monthlyplot, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,4))
+  
+  save_plot(paste0(fig_save, 'monthlyTimeseries_MI_Lag', lag, '.pdf'), fullplot, base_height = 5)
+  save_plot(paste0(fig_save, 'monthlyTimeseries_MI_Lag', lag, '.jpeg'), fullplot, base_height = 5)
+
+  print(fullplot)
+  
+}
+```
+
+```{r}
+lag = 1
+x  = seq(1:12)
+c(x[(lag+1):length(x)],x[1:(lag+1)-1])
+```
 
 
 
