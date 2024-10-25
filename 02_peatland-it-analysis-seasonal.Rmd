@@ -2379,7 +2379,7 @@ for(i in seq(0, 10)){
 nbins = 30 
 
 calc_seasonalQ_contribution_noConditional = function(var, lag){
-    dat = c()
+    temp = c()
     
     #Lag timeseries
     lagDat = lagTS(data_monthly_nogaps[, var], data_monthly_nogaps$totQ, lag)
@@ -2392,15 +2392,15 @@ calc_seasonalQ_contribution_noConditional = function(var, lag){
         lagDat_monthly = lagDat %>% filter(month == i)  
 
         #calculate mutual information
-        dat = append(dat, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX, nbins = nbins),
+        temp = append(temp, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX, nbins = nbins),
                                           Y = discretize(lagDat_monthly$shiftedY, nbins = nbins))))
     }
     
-    return(dat)
+    return(temp)
 }
 
 calc_seasonalQ_contribution_Conditional = function(var, lag){
-    dat = c()
+    temp = c()
     
     #Lag timeseries
     lagDat = lagTS(data_monthly_nogaps[, var], data_monthly_nogaps$totQ, lag)
@@ -2417,12 +2417,12 @@ calc_seasonalQ_contribution_Conditional = function(var, lag){
         lagDat_monthly = lagDat %>% filter(month == i)  
 
         #calculate mutual information
-        dat = append(dat, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX, nbins = nbins),
+        temp = append(temp, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX, nbins = nbins),
                                           Y = discretize(lagDat_monthly$shiftedY, nbins = nbins), 
                                           S = discretize(lagDat_monthly$z, nbins = nbins))))
     }
     
-    return(dat)
+    return(temp)
 }
 
 
@@ -2431,6 +2431,7 @@ calc_seasonalQ_contribution_Conditional = function(var, lag){
 ```{r}
 vars = c('meanT', 'totPrecip', 'meanWTE', 'S2S_SH', 'S2S_DP', 'S2N_SH', 'S2N_DP')
 
+#Pure Mutual Information, no conditional
 for(lag in seq(1, 6)){
   monthly_MI_data = data.frame(matrix(ncol = 0, nrow = 12))
   
@@ -2460,6 +2461,8 @@ for(lag in seq(1, 6)){
 ```{r}
 buff = 0.2
 
+#Time series based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
 for(lag in seq(1, 6)){
   monthly_MI_data = data.frame(matrix(ncol = 0, nrow = 12))
   
@@ -2469,7 +2472,8 @@ for(lag in seq(1, 6)){
   
   #Plot stacked time series (plus shifted data)
   x  = seq(1:12)
-  months = c(x[(lag+1):length(x)],x[1:(lag+1)-1])
+  #months = c(x[(lag+1):length(x)],x[1:(lag+1)-1])
+  months = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
   monthly_MI_data = monthly_MI_data %>% 
     mutate(month = months) %>%
     gather(variable, value, vars)
@@ -2520,10 +2524,375 @@ for(lag in seq(1, 6)){
 ```
 
 ```{r}
-lag = 1
-x  = seq(1:12)
-c(x[(lag+1):length(x)],x[1:(lag+1)-1])
+#Variable based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(v in vars){
+  monthly_MI_var_data = data.frame(matrix(ncol = 0, nrow = 12))
+  
+  for(lag in seq(1, 6)){
+    temp = calc_seasonalQ_contribution_Conditional(v, lag)
+    #time shift the MI values
+    monthly_MI_var_data[lag] = c(temp[(length(temp)-lag+1):length(temp)], temp[1:(length(temp)-lag)])
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:12)
+  monthly_MI_var_data = monthly_MI_var_data %>% 
+    mutate(month = x) %>%
+    gather(variable, value, seq(1,6))
+  
+  monthlyplot = ggplot(data = monthly_MI_var_data, aes(x = month, y = value, fill = variable)) +
+    #Label Seasons first
+    geom_vline(xintercept = 4, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 4+buff, label="Melt Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 7, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 7+buff, label="Growing Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 10, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 10+buff, label="Snow Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    #Plot
+    geom_area() +
+    scale_fill_brewer(palette = "PuBuGn") + 
+    xlim(1,12) +
+    ylim(0, 4) + 
+    xlab('Month') + 
+    ylab('Conditional Mutual Information') +
+    ggtitle(paste0('Lagged Streamflow Contributions from ', v)) +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) + 
+    scale_x_continuous(n.breaks=12) 
+  
+  print(monthlyplot)
+}
 ```
+
+### Vectorized version
+
+```{r}
+#Prep daily data
+#group by and summarize
+data_means = data %>%
+   group_by(day) %>%
+   select(c(day, month, South_PCP, WTE, qInterval, MEANC)) %>%
+   summarize_all(mean, na.rm = TRUE) %>%
+   rename(meanPrecip = South_PCP, meanWTE = WTE, meanQ = qInterval, meanT = MEANC)
+
+data_totals = data %>%
+   select(c(day, month, South_PCP, qInterval)) %>%
+   rename(totPrecip = South_PCP, totQ = qInterval)
+
+#Currently grouping all soil data into north and south, deep and shallow resevoirs but will come back and separate these out later
+data_soils = data %>%
+  mutate(S2S_SH = rowMeans(select(data, c(S2S_UP_SH, S2S_MI_SH, S2S_LO_SH)), na.rm = TRUE)) %>%
+  mutate(S2S_DP = rowMeans(select(data, c(S2S_UP_DP, S2S_MI_DP, S2S_LO_DP)), na.rm = TRUE)) %>%
+  mutate(S2N_SH = rowMeans(select(data, c(S2N_UP_SH, S2N_MI_SH, S2N_LO_SH)), na.rm = TRUE)) %>%
+  mutate(S2N_DP = rowMeans(select(data, c(S2N_UP_DP, S2N_MI_DP, S2N_LO_DP)), na.rm = TRUE)) %>%
+  group_by(day) %>%
+  select(c(day, month, S2S_SH, S2S_DP, S2N_SH, S2N_DP)) %>%
+  summarize_all(mean, na.rm = TRUE)
+
+#Merge all data together
+data_daily = merge(data_means, data_totals, by = c('day', 'month'))
+data_daily = merge(data_daily, data_soils, by = c('day', 'month'))
+summary(data_daily)
+```
+
+#### Gapfill Streamflow Data
+
+```{r}
+#Streamflow model from precip and water tabe elevation
+
+#Test if values below 421.67 are significantly different from zero
+t.test(na.omit(data_daily %>% filter(meanWTE < 421.67))$totQ)
+
+#model values above 421.67
+data_daily['logTotQ'] = log(data_daily$totQ)
+data_daily = data_daily %>% mutate_if(is.numeric, list(~na_if(., -Inf)))
+
+modelQ = lm(logTotQ ~ meanWTE, data = na.omit(data_daily %>% filter(meanWTE > 421.67)))
+summary(modelQ)
+```
+
+```{r}
+modelQ_coef <- coef(modelQ)
+x = seq(421.67, max(data_daily$meanWTE), by = 0.01)
+y = exp(modelQ_coef[2]*x + modelQ_coef[1])
+plot(x = na.omit(data_daily)$meanWTE, y = na.omit(data_daily)$totQ)
+lines(x, y, col = "dodgerblue", lwd = 2)
+legend("topleft", col = c("dodgerblue"), 
+       legend = c("lm fit"), lwd = 2)
+
+plot(modelQ)
+```
+
+```{r}
+#Gapfill streamflow
+data_daily$totQ <- ifelse(is.na(data_daily$totQ),
+                          ifelse(data_daily$meanWTE < 421.67, 0, 
+                                 exp(modelQ_coef[2]*data_daily$meanWTE + modelQ_coef[1])),
+                          data_daily$totQ)
+summary(data_daily)
+```
+
+#### Gapfill soil moisture data
+
+```{r}
+modelS2S_SH = lm(S2S_SH ~ meanWTE, data = na.omit(data_daily))
+summary(modelS2S_SH)
+
+par(mfrow = c(1, 2))
+plot(x = na.omit(data_daily)$S2S_DP, y = na.omit(data_daily)$S2S_SH)
+plot(x = na.omit(data_daily)$meanWTE, y = na.omit(data_daily)$S2S_SH)
+
+par(mfrow=c(1,1))
+plot(modelS2S_SH)
+
+modelS2S_SH_coef <- coef(modelS2S_SH)
+data_daily$S2S_SH <- ifelse(is.na(data_daily$S2S_SH),
+                                 modelS2S_SH_coef[2]*data_daily$meanWTE +
+                              #modelS2S_SH_coef[3]*data_daily$S2S_DP +
+                              #modelS2S_SH_coef[4]*data_daily$S2S_DP*data_daily$meanWTE +
+                              modelS2S_SH_coef[1],
+                          data_daily$S2S_SH)
+summary(data_daily$S2S_SH)
+```
+
+```{r}
+modelS2S_DP = lm(S2S_DP ~ meanWTE, data = na.omit(data_daily))
+summary(modelS2S_DP)
+
+par(mfrow = c(1, 2))
+plot(x = na.omit(data_daily)$totPrecip, y = na.omit(data_daily)$S2S_DP)
+plot(x = na.omit(data_daily)$meanWTE, y = na.omit(data_daily)$S2S_DP)
+
+par(mfrow=c(1,1))
+plot(modelS2S_DP)
+
+modelS2S_DP_coef <- coef(modelS2S_DP)
+data_daily$S2S_DP <- ifelse(is.na(data_daily$S2S_DP),
+                                 modelS2S_DP_coef[2]*data_daily$meanWTE +
+                              #modelS2S_SH_coef[3]*data_daily$S2S_DP +
+                              #modelS2S_SH_coef[4]*data_daily$S2S_DP*data_daily$meanWTE +
+                              modelS2S_DP_coef[1],
+                          data_daily$S2S_DP)
+summary(data_daily$S2S_DP)
+```
+
+```{r}
+modelS2N_SH = lm(S2N_SH ~ meanWTE, data = na.omit(data_daily))
+summary(modelS2N_SH)
+
+par(mfrow = c(1, 2))
+plot(x = na.omit(data_daily)$S2N_DP, y = na.omit(data_daily)$S2N_SH)
+plot(x = na.omit(data_daily)$meanWTE, y = na.omit(data_daily)$S2N_SH)
+
+par(mfrow=c(1,1))
+plot(modelS2N_SH)
+
+modelS2N_SH_coef <- coef(modelS2N_SH)
+data_daily$S2N_SH <- ifelse(is.na(data_daily$S2N_SH),
+                                 modelS2N_SH_coef[2]*data_daily$meanWTE +
+                              #modelS2S_SH_coef[3]*data_daily$S2S_DP +
+                              #modelS2S_SH_coef[4]*data_daily$S2S_DP*data_daily$meanWTE +
+                              modelS2N_SH_coef[1],
+                          data_daily$S2N_SH)
+summary(data_daily$S2N_SH)
+```
+
+```{r}
+modelS2N_DP = lm(S2N_DP ~ meanWTE, data = na.omit(data_daily))
+summary(modelS2N_DP)
+
+par(mfrow = c(1, 2))
+plot(x = na.omit(data_daily)$totPrecip, y = na.omit(data_daily)$S2N_DP)
+plot(x = na.omit(data_daily)$meanWTE, y = na.omit(data_daily)$S2N_DP)
+
+par(mfrow=c(1,1))
+plot(modelS2N_DP)
+
+modelS2N_DP_coef <- coef(modelS2N_DP)
+data_daily$S2N_DP <- ifelse(is.na(data_daily$S2N_DP),
+                                 modelS2N_DP_coef[2]*data_daily$meanWTE +
+                              #modelS2S_SH_coef[3]*data_daily$S2S_DP +
+                              #modelS2S_SH_coef[4]*data_daily$S2S_DP*data_daily$meanWTE +
+                              modelS2N_DP_coef[1],
+                          data_daily$S2N_DP)
+summary(data_daily$S2N_DP)
+```
+
+```{r}
+summary(data_daily)
+```
+
+
+#### Ensemble contributions
+
+
+```{r}
+nbins = 15
+calc_seasonalQ_contribution_conditional_ensemble = function(var, lag){
+  temp = c()
+  
+  #Lag timeseries
+  #lagDat = lagTS(data_monthly_nogaps[, var], data_monthly_nogaps$totQ, lag)
+  lagDat = lagTS(data_monthly_nogaps$date, data_monthly_nogaps$date, lag)
+  
+  #Lag autocorrelation
+  #lagY = lagTS(data_monthly_nogaps$totQ, data_monthly_nogaps$totQ, lag-1)
+  lagY = lagTS(data_monthly_nogaps$date, data_monthly_nogaps$date, lag-1)
+  
+          
+  #Attach monthly values
+  lagDat = cbind(lagDat,
+                 z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)])
+      
+  for(i in seq(1, 12)){
+    #filter
+    lagDat_monthly = lagDat %>% filter(month(shiftedX) == i)  
+    
+    #pull daily values for the associated month
+    X = data_daily %>%
+        filter(data_daily$month %in% lagDat_monthly$shiftedX) %>%
+        select(c(day, month, var)) %>%
+        mutate(lagIndex = match(month, lagDat_monthly$shiftedX)) %>%
+        mutate(dayOfMonth = as.integer(format(day, "%d"))) %>%
+        select(-c(day, month))
+    
+    Y = data_daily %>%
+        filter(data_daily$month %in% lagDat_monthly$shiftedY) %>%
+        select(c(day, month, 'totQ')) %>%
+        rename(totQ_Y = totQ) %>%
+        mutate(lagIndex = match(month, lagDat_monthly$shiftedY)) %>%
+        mutate(dayOfMonth = as.integer(format(day, "%d"))) %>%
+        select(-c(day, month))
+    
+    Z = data_daily %>%
+        filter(data_daily$month %in% lagDat_monthly$z) %>%
+        select(c(day, month, 'totQ')) %>%
+        rename(totQ_Z = totQ) %>%
+        mutate(lagIndex = match(month, lagDat_monthly$z)) %>%
+        mutate(dayOfMonth = as.integer(format(day, "%d"))) %>%
+        select(-c(day, month))
+    
+    #merge
+    lagDat_full = merge(X, merge(Y, Z, by = c('lagIndex', 'dayOfMonth')), by = c('lagIndex', 'dayOfMonth'), all = TRUE) %>%
+      drop_na()
+        
+    #calculate mutual information
+    temp = append(temp, natstobits(condinformation(X = discretize(lagDat_full[, var], nbins = nbins),
+                                            Y = discretize(lagDat_full$totQ_Y, nbins = nbins), 
+                                            S = discretize(lagDat_full$totQ_Z, nbins = nbins))))
+  }
+  
+  return(temp)
+}
+```
+
+```{r}
+#Time series based plots with ENSEMBLE
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(lag in seq(1, 6)){
+  monthly_MI_data = data.frame(matrix(ncol = 0, nrow = 12))
+  
+  for(v in vars){
+    monthly_MI_data[v] = calc_seasonalQ_contribution_conditional_ensemble(v, lag)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:12)
+  #months = c(x[(lag+1):length(x)],x[1:(lag+1)-1])
+  months = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  monthly_MI_data = monthly_MI_data %>% 
+    mutate(month = months) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot = ggplot(data = monthly_MI_data, aes(x = month, y = value, fill = variable)) +
+    #Label Seasons first
+    #4, (4-lag)%%12
+    #7, (7-lag)%%12
+    #10, (10-lag)%%12
+    geom_vline(xintercept = 4, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 4+buff, label="Melt Season", y=5), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 7, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 7+buff, label="Growing Season", y=5), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 10, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 10+buff, label="Snow Season", y=5), colour="grey", hjust = 'right', angle=90, size = 3) +
+    #Plot
+    geom_area() +
+    scale_fill_brewer(palette = "BrBG") + 
+    xlim(1,12) +
+    ylim(0, 5) + 
+    xlab('Month') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) + 
+    scale_x_continuous(n.breaks=12) 
+  
+  streamplot = ggplot(data = data_clipped, aes(x = yday(day), y = qInterval)) +
+    stat_summary(fun = mean, geom = 'smooth', color = 'grey') + 
+    ylim(0, 0.002) +
+    xlim(0, 365) +
+    xlab('Day of Year') + 
+    ylab('Streamflow (m)') +
+    ggtitle(paste0('Monthly Conditional Information, Ensemble, t = ', lag, ', l = 1')) +
+    theme(panel.background = element_blank()) 
+    
+  fullplot = plot_grid(streamplot, monthlyplot, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,4))
+  
+  save_plot(paste0(fig_save, 'monthlyTimeseries_MI_Ensemble_Lag', lag, '.pdf'), fullplot, base_height = 5)
+  save_plot(paste0(fig_save, 'monthlyTimeseries_MI_Ensemble_Lag', lag, '.jpeg'), fullplot, base_height = 5)
+
+  print(fullplot)
+  
+}
+```
+
+```{r}
+#Variable based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(v in vars){
+  monthly_MI_var_data = data.frame(matrix(ncol = 0, nrow = 12))
+  
+  for(lag in seq(1, 6)){
+    temp = calc_seasonalQ_contribution_conditional_ensemble(v, lag)
+    #time shift the MI values
+    monthly_MI_var_data[lag] = c(temp[(length(temp)-lag+1):length(temp)], temp[1:(length(temp)-lag)])
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:12)
+  monthly_MI_var_data = monthly_MI_var_data %>% 
+    mutate(month = x) %>%
+    gather(variable, value, seq(1,6))
+  
+  monthlyplot = ggplot(data = monthly_MI_var_data, aes(x = month, y = value, fill = variable)) +
+    #Label Seasons first
+    geom_vline(xintercept = 4, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 4+buff, label="Melt Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 7, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 7+buff, label="Growing Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    geom_vline(xintercept = 10, linetype = "longdash", color = 'grey') +
+    geom_text(aes(x = 10+buff, label="Snow Season", y=4), colour="grey", hjust = 'right', angle=90, size = 3) +
+    #Plot
+    geom_area() +
+    scale_fill_brewer(palette = "PuBuGn") + 
+    xlim(1,12) +
+    ylim(0, 4) + 
+    xlab('Month') + 
+    ylab('Conditional Mutual Information, Ensemble') +
+    ggtitle(paste0('Lagged Streamflow Contributions from ', v)) +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) + 
+    scale_x_continuous(n.breaks=12) 
+  
+  print(monthlyplot)
+}
+```
+
+
 
 
 
