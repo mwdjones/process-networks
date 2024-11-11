@@ -1,0 +1,367 @@
+---
+title: "Transfer Entrop Flow Analysis"
+author: "Mariel Jones"
+date: "2024-08-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+fig_save = "./Figures/"
+load_path = "./mef-data/"
+```
+
+```{r}
+library(astsa)
+library(dplyr)
+library(xts)
+library(lubridate)
+library(RTransferEntropy)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(forecastML)
+library(cowplot)
+library(reshape2)
+library(zoo)
+library(infotheo)
+library(stringr)
+library(latex2exp)
+library(Hmisc)
+library(multcompView)
+```
+
+```{r}
+#Seasonal Soil Moisture
+seasmURL  <- "https://pasta.lternet.edu/package/data/eml/edi/612/2/9769461f3732c922a9af819587922c86" 
+seasmInfile <- tempfile()
+try(download.file(seasmURL, seasmInfile, method="curl"))
+if (is.na(file.size(seasmInfile))) download.file(seasmURL,seasmInfile,method="auto")
+
+seasm <-read.csv(seasmInfile, header=F, skip=1, sep=",",
+                 col.names=c("DATE", "LOCATION", "d.15", "d.46",     
+                    "d.76", "d.107", "d.137", "d.168", "d.198", "d.229",     
+                    "d.259", "d.290", "d.320"), check.names=TRUE)
+
+               
+unlink(seasmInfile)
+tmp1DATE<-as.Date(seasm$DATE,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(seasm[seasm$DATE != "",]) == length(tmp1DATE[!is.na(tmp1DATE)])){seasm$DATE <- tmp1DATE } else {print("Date conversion failed for dt1$DATE. Please inspect the data and do the date conversion yourself.")}
+
+# Select just the S2 watershed
+seasm = seasm %>%
+  filter(LOCATION %in% c('S2E','S2S'))
+
+#Snow depths
+snow = read.csv('./mef-data/GR_ForestryLab_snow_daily.csv', 
+                na.strings = c('M', 'T'))
+snow$Date<-as.POSIXct(snow$Date,format="%Y-%m-%d")
+snow = snow %>%
+  filter(year(Date) > 1967)
+
+# Streamflow
+streamURL  <- "https://pasta.lternet.edu/package/data/eml/edi/573/1/2aca4b900546e80ed7dd409ff1ad9787" 
+streamInfile <- tempfile()
+try(download.file(streamURL,streamInfile,method="curl"))
+if (is.na(file.size(streamInfile))) download.file(streamURL,streamInfile,method="auto")
+
+stream <-read.csv(streamInfile, header=F, skip=1, sep=",",
+                  col.names=c("Peatland", "DateTime", "Stage.ft", "Q.cfs", "q.mmh", "q.interval"),
+                  check.names=TRUE)
+               
+unlink(streamInfile)
+if (class(stream$Peatland)!="factor") stream$Peatland<- as.factor(stream$Peatland)                       
+tmp1DateTime<-as.POSIXct(stream$DateTime,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(stream[stream$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){stream$DateTime <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
+stream = stream %>%
+  filter(year(DateTime) > 1967) %>%
+  filter(Peatland == 'S2')
+```
+
+```{r}
+snowAnnual = snow %>%
+  mutate(snowYear = ifelse(month(Date) < 10, year(Date), year(Date) + 1)) %>%
+  filter(snowYear > 1948) %>%
+  group_by(snowYear) %>%
+  summarise(totSnow = sum(Snow..inches., na.rm=TRUE))
+
+snowAnnual = snowAnnual %>%
+  mutate(type = ifelse(totSnow > mean(snowAnnual$totSnow), 'High', 'Low'))
+
+```
+
+```{r}
+#Find first and last non-zero snow and streamflow values
+snow_bounds = snow %>%
+  mutate(year = year(Date)) %>%
+  group_by(year) %>%
+  summarise(firstNZ = yday(Date)[which((Snow.Depth..inches. != 0) & !is.na(Snow.Depth..inches.))[1]],
+            lastNZ = yday(Date)[tail(which((Snow.Depth..inches. != 0) & (month(Date) < 10) & !is.na(Snow.Depth..inches.)))[5]]) 
+
+snow_bounds_high = snow_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'High'])
+snow_bounds_low = snow_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
+
+stream_bounds = stream %>%
+  mutate(year = year(DateTime)) %>%
+  group_by(year) %>%
+  #A threshold is set to eliminate the teeny tiny flows that continue dripping into January
+  summarise(firstNZ = yday(DateTime)[which((q.interval > 0.01) & !is.na(q.interval))[1]],
+            lastNZ = yday(DateTime)[tail(which((q.interval > 0.01) & !is.na(q.interval)))[5]]) 
+
+stream_bounds_high = stream_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'High'])
+stream_bounds_low = stream_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
+
+seasm_high = seasm %>%
+  filter(year(DATE) %in% snowAnnual$snowYear[snowAnnual$type == 'High'])
+seasm_low = seasm %>%
+  filter(year(DATE) %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
+```
+
+
+```{r, warning = FALSE}
+dataPlotHigh = ggplot() + 
+  #melt season (April 1st to July 1st)
+  #had been 92 for xmin
+  annotate('rect', xmin = 110, xmax = 183, ymin = 1968, ymax = 2024, alpha = 0.2, fill = 'lightblue') +
+  #streamflow season (July 1st to Oct 15th)
+  annotate('rect', xmin = 183, xmax = 289, ymin = 1968, ymax = 2024, alpha = 0.2, fill = 'slateblue') +
+  #stream window lines
+  geom_segment(data = stream_bounds_high, aes(x = firstNZ, y = year, xend = lastNZ, yend = year), col = 'gray') +
+  #snow window
+  geom_segment(data = snow_bounds_high, aes(x = firstNZ, y = year, xend = lastNZ, yend = year),
+               lineend = "round", 
+               col = 'black', linewidth = 1,
+               arrow = arrow(length = unit(0.1,"cm"))) +
+  #soil moisture dates
+  geom_jitter(data = seasm_high,
+              aes(x = yday(DATE), y = year(DATE), color = LOCATION), width = 4, height = 0) + 
+  #add mean dates arrow
+  geom_segment(aes(x = mean(stream_bounds_high$firstNZ, na.rm = TRUE), xend = mean(stream_bounds_high$lastNZ, na.rm = TRUE),
+                   y = 2028, yend = 2028),
+               col = 'gray') +
+  annotate("text", x = 50, y = 2030, label = "Snow Season", col = 'grey', size = 2) +
+  annotate("text", x = 150, y = 2030, label = "Streamflow Season", col = 'grey', size = 2) +
+  geom_segment(aes(x = mean(snow_bounds_high$firstNZ, na.rm = TRUE), xend = mean(snow_bounds_high$lastNZ, na.rm = TRUE),
+                   y = 2028, yend = 2028), 
+               lineend = "round", 
+               col = 'black', linewidth = 1,
+               arrow = arrow(length = unit(0.1,"cm"))) + 
+  #specifications
+  scale_color_brewer(palette = 'Paired') + 
+  xlab('Day of the Year') + 
+  ylab('Year') + 
+  ggtitle('High Snow') + 
+  theme(legend.position = 'bottom',
+        aspect.ratio = 1,
+        panel.background = element_blank())
+
+dataPlotLow = ggplot() + 
+  #melt season (April 1st to July 1st)
+  annotate('rect', xmin = 110, xmax = 183, ymin = 1968, ymax = 2024, alpha = 0.2, fill = 'lightblue') +
+  #streamflow season (July 1st to Oct 15th)
+  annotate('rect', xmin = 183, xmax = 289, ymin = 1968, ymax = 2024, alpha = 0.2, fill = 'slateblue') +
+  #stream window lines
+  geom_segment(data = stream_bounds_low, aes(x = firstNZ, y = year, xend = lastNZ, yend = year), col = 'gray') +
+  #snow window
+  geom_segment(data = snow_bounds_low, aes(x = firstNZ, y = year, xend = lastNZ, yend = year),
+               lineend = "round", 
+               col = 'black', linewidth = 1,
+               arrow = arrow(length = unit(0.1,"cm"))) +
+  #soil moisture dates
+  geom_jitter(data = seasm_low,
+              aes(x = yday(DATE), y = year(DATE), color = LOCATION), width = 4, height = 0) + 
+  #add mean dates arrow
+  geom_segment(aes(x = mean(stream_bounds_low$firstNZ, na.rm = TRUE), xend = mean(stream_bounds_low$lastNZ, na.rm = TRUE),
+                   y = 2028, yend = 2028),
+               col = 'gray') +
+  annotate("text", x = 50, y = 2030, label = "Snow Season", col = 'grey', size = 2) +
+  annotate("text", x = 150, y = 2030, label = "Streamflow Season", col = 'grey', size = 2) +
+  geom_segment(aes(x = mean(snow_bounds_low$firstNZ, na.rm = TRUE), xend = mean(snow_bounds_low$lastNZ, na.rm = TRUE),
+                   y = 2028, yend = 2028), 
+               lineend = "round", 
+               col = 'black', linewidth = 1,
+               arrow = arrow(length = unit(0.1,"cm"))) + 
+  #specifications
+  scale_color_brewer(palette = 'Paired') + 
+  xlab('Day of the Year') + 
+  ylab('Year') + 
+  ggtitle('Low Snow') +
+  theme(legend.position = 'none',
+        aspect.ratio = 1,
+        panel.background = element_blank())
+
+dataPlot = plot_grid(dataPlotHigh, dataPlotLow, 
+            ncol = 2,
+            axis = 'l',
+            align = 'hv')
+
+
+save_plot(paste0(fig_save, 'seasonalSM_dataTiming.jpeg'), dataPlot, base_height = 7, base_asp = 1.2)
+save_plot(paste0(fig_save, 'seasonalSM_dataTiming.pdf'), dataPlot, base_height = 7, base_asp = 1.2)
+  
+dataPlot
+```
+```{r}
+#Group data by season
+
+#All based on fixed April 1st date for early streamflow period - based on low snow years
+#seasm = seasm %>%
+#  mutate(season = ifelse(yday(DATE) > 92 & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 289, #'Streamflow', 'Frost')))
+
+#All based on fixed April 15th date for early streamflow period - based on high snow years
+#seasm = seasm %>%
+#  mutate(season = ifelse(yday(DATE) > 105 & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 289, 'Streamflow', 'Frost')))
+
+#Dynamic date definitions based on when the snow disappears
+seasm = seasm %>%
+  mutate(year = year(DATE)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 289, 'Growing', 'Snow'))) 
+```
+
+```{r}
+seasm
+```
+
+```{r}
+#Ttest and tukey test
+model.46=lm( d.46 ~ LOCATION*season, data = seasm)
+anova.46=aov(model.46)
+model.168=lm( d.168 ~ LOCATION*season, data = seasm)
+anova.168=aov(model.168)
+ 
+# Tukey test to study each pair of treatment
+tukey.46 <- TukeyHSD(x=anova.46, conf.level=0.95)
+tukey.168 <- TukeyHSD(x=anova.168, conf.level=0.95)
+ 
+# Tuckey test representation 
+plot(tukey.46 , las=1 , col="brown")
+plot(tukey.168 , las=1 , col="brown")
+```
+
+
+```{r}
+#do some boxplots to show intra-seasonal variation
+
+#gather tukey labels
+cld.46 <- multcompLetters4(anova.46, tukey.46)
+cld.168 <- multcompLetters4(anova.168, tukey.168)
+
+labs.46 = as.data.frame.list(cld.46$`LOCATION:season`)$Letters
+labs.168 = as.data.frame.list(cld.168$`LOCATION:season`)$Letters
+
+cm46 = ggplot(data = seasm, aes(x = LOCATION, y = d.46)) +
+  geom_boxplot(aes(fill = LOCATION)) + 
+  facet_grid(.~season) +
+  xlab(' ') +
+  ylab('SWC at 46cm') + 
+  theme(legend.position = 'right',
+        aspect.ratio = 1,
+        panel.background = element_blank())
+
+
+cm168= ggplot(data = seasm, aes(x = LOCATION, y = d.168)) +
+  geom_boxplot(aes(fill = LOCATION)) + 
+  facet_grid(.~season) +
+  xlab(' ') +
+  ylab('SWC at 168cm') + 
+  theme(legend.position = 'none',
+        aspect.ratio = 1,
+        panel.background = element_blank())
+
+smComp = plot_grid(cm46, cm168,
+          ncol = 1,
+          align="hv")
+
+save_plot(paste0(fig_save, 'seasonalSM_boxplot.jpeg'), smComp, base_height = 6, base_asp = 1.2)
+save_plot(paste0(fig_save, 'seasonalSM_boxplot.pdf'), smComp, base_height = 6, base_asp = 1.2)
+
+smComp
+```
+
+Little test to see if removing the extra data makes a difference (it doesn't)
+
+```{r}
+#try removing data not collected within the same seasonal window
+seasm_reduced = seasm %>%
+  filter(!((yday(DATE) < 100) | (yday(DATE) > 180 & yday(DATE) < 240 ) | (yday(DATE) > 340)))
+
+ggplot(data = seasm_reduced, aes(x = yday(DATE), y = year(DATE))) + 
+  #melt season (April 1st to July 1st)
+  geom_rect(aes(xmin = 105, xmax = 183, ymin = min(year(DATE)), ymax = max(year(DATE))), fill = 'lightblue') +
+  #streamflow season (July 1st to Oct 15th)
+  geom_rect(aes(xmin = 183, xmax = 289, ymin = min(year(DATE)), ymax = max(year(DATE))), fill = 'lightgreen') + 
+  geom_jitter(aes(col = LOCATION), width = 4) + 
+  xlab('Day of the Year') + 
+  ylab('Year') + 
+  theme(legend.position = 'top',
+        aspect.ratio = 1,
+        panel.background = element_blank())
+  
+
+cm46 = ggplot(data = seasm_reduced, aes(x = LOCATION, y = d.46)) +
+  geom_boxplot(aes(fill = LOCATION)) + 
+  facet_grid(.~season) +
+  xlab(' ') +
+  ylab('SWC at 46cm') + 
+  theme(legend.position = 'right',
+        aspect.ratio = 1,
+        panel.background = element_blank())
+
+cm168= ggplot(data = seasm_reduced, aes(x = LOCATION, y = d.168)) +
+  geom_boxplot(aes(fill = LOCATION)) + 
+  facet_grid(.~season) +
+  xlab(' ') +
+  ylab('SWC at 168cm') + 
+  theme(legend.position = 'none',
+        aspect.ratio = 1,
+        panel.background = element_blank())
+
+smComp = plot_grid(cm46, cm168,
+          ncol = 1,
+          align="hv")
+
+smComp
+```
+
+```{r}
+#Lump and average data -- remove years that don't have all three seasons
+
+#First remove the S2W sensors - there are too few data points and 
+#group
+seasm_grouped = seasm %>%
+  filter(LOCATION %in% c('S2E', 'S2S')) %>%
+  mutate(YEAR = year(DATE)) %>%
+  group_by(YEAR, LOCATION, season) %>%
+  summarise_at(vars(d.15:d.320), mean, na.rm = TRUE)
+
+#remove if not all three seasons
+seasm_reduced = seasm_grouped %>%
+  group_by(YEAR, LOCATION) %>% 
+  filter(all(c('Snow', 'Melt', 'Growing') %in% season))
+
+seasm_reduced
+```
+
+```{r}
+#Export
+write.csv(seasm_reduced, './mef-data/seasonal/seasonal-soilM-grouped-untransformed.csv')
+```
+
+
+
+
+
+
+
+
+

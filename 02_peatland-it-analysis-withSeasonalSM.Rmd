@@ -1,0 +1,958 @@
+---
+title: "Transfer Entrop Flow Analysis"
+author: "Mariel Jones"
+date: "2024-08-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+fig_save = "./Figures/"
+load_path = "./mef-data/"
+```
+
+```{r}
+library(astsa)
+library(dplyr)
+library(xts)
+library(lubridate)
+library(RTransferEntropy)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(forecastML)
+library(cowplot)
+library(reshape2)
+library(zoo)
+library(infotheo)
+library(stringr)
+library(latex2exp)
+library(Hmisc)
+```
+
+```{r}
+#Import Soil Moisture and PDSI data
+## 10 minute soil moisture
+smURL  <- "https://pasta.lternet.edu/package/data/eml/edi/989/3/e25d4f15276a3158af412758502a59b0" 
+smInfile <- tempfile()
+try(download.file(smURL,smInfile,method="curl"))
+if (is.na(file.size(smInfile))) download.file(smURL,smInfile,method="auto")
+
+sm <-read.csv(smInfile, header=F, skip=1, sep=",", 
+              col.names=c("TIMESTAMP", "S2S_UP_SH", "S2S_UP_DP", "S2S_MI_SH", 
+                          "S2S_MI_DP", "S2S_LO_SH", "S2S_LO_DP", "S2N_UP_SH",     
+                          "S2N_UP_DP", "S2N_MI_SH", "S2N_MI_DP", "S2N_LO_SH",     
+                          "S2N_LO_DP"), check.names=TRUE)
+               
+unlink(smInfile)
+tmp2TIMESTAMP<-as.POSIXct(sm$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(sm[sm$TIMESTAMP != "",]) == length(tmp2TIMESTAMP[!is.na(tmp2TIMESTAMP)])){sm$TIMESTAMP <- tmp2TIMESTAMP } else {print("Date conversion failed for sm$TIMESTAMP. Please inspect the data and do the date conversion yourself.")} 
+#Aggregate to daily
+sm$day <- floor_date(sm$TIMESTAMP, "day")
+sm_daily = data.frame(sm) %>%
+  group_by(day) %>%
+  summarise_all(mean) %>%
+  select(-TIMESTAMP)
+
+
+#Seasonal Soil Moisture (previously processed)
+seasm <-read.csv('./mef-data/seasonal/seasonal-soilM-grouped-untransformed.csv', header=T, sep=",")
+         
+# Precipitation
+precipURL  <- "https://pasta.lternet.edu/package/data/eml/edi/563/6/f3a58ff544a4ddd3475d265da61bf40e" 
+precipInfile <- tempfile()
+try(download.file(precipURL,precipInfile,method="curl"))
+if (is.na(file.size(precipInfile))) download.file(precipURL,precipInfile,method="auto")
+
+precip <-read.csv(precipInfile , header=F, skip=1, sep = ",", 
+               col.names=c("DATE", "NADP_PCP", "South_PCP", "North_PCP",     
+                    "NADP_Flag", "South_Flag", "North_Flag") ,check.names=TRUE)
+unlink(precipInfile)
+tmp3DATE<-as.POSIXct(precip$DATE,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(precip[precip$DATE != "",]) == length(tmp3DATE[!is.na(tmp3DATE)])){precip$DATE <- tmp3DATE } else {print("Date conversion failed for precip$TIMESTAMP. Please inspect the data and do the date conversion yourself.")}                                 
+if (class(precip$South_PCP)=="factor") precip$South_PCP <-as.numeric(levels(precip$South_PCP))[as.integer(precip$South_PCP) ]               
+if (class(precip$South_PCP)=="character") precip$South_PCP <-as.numeric(precip$South_PCP)
+if (class(precip$South_Flag)!="factor") precip$South_Flag<- as.factor(precip$South_Flag)
+                
+# Convert Missing Values to NA for non-dates
+precip$South_PCP <- ifelse((trimws(as.character(precip$South_PCP))==trimws("NA")),NA,precip$South_PCP)         
+
+# Streamflow
+streamURL  <- "https://pasta.lternet.edu/package/data/eml/edi/573/1/2aca4b900546e80ed7dd409ff1ad9787" 
+streamInfile <- tempfile()
+try(download.file(streamURL,streamInfile,method="curl"))
+if (is.na(file.size(streamInfile))) download.file(streamURL,streamInfile,method="auto")
+
+stream <-read.csv(streamInfile, header=F, skip=1, sep=",",
+                  col.names=c("Peatland", "DateTime", "Stage.ft", "Q.cfs", "q.mmh", "q.interval"),
+                  check.names=TRUE)
+               
+unlink(streamInfile)
+if (class(stream$Peatland)!="factor") stream$Peatland<- as.factor(stream$Peatland)                       
+tmp1DateTime<-as.POSIXct(stream$DateTime,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(stream[stream$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){stream$DateTime <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
+
+
+# Bog well WTE
+bogURL  <- "https://pasta.lternet.edu/package/data/eml/edi/562/3/671f15337a677da71852de506a8d9b05" 
+bogInfile <- tempfile()
+try(download.file(bogURL,bogInfile,method="curl"))
+if (is.na(file.size(bogInfile))) download.file(bogURL,bogInfile,method="auto")
+
+bog <-read.csv(bogInfile, header=F,skip=1, sep=",",
+               col.names=c("PEATLAND", "DATE", "WTE", "FLAG"), check.names=TRUE)
+               
+unlink(bogInfile)
+if (class(bog$PEATLAND)!="factor") bog$PEATLAND<- as.factor(bog$PEATLAND)                                   
+tmp1DATE<-as.Date(bog$DATE,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(bog[bog$DATE != "",]) == length(tmp1DATE[!is.na(tmp1DATE)])){bog$DATE <- tmp1DATE } else {print("Date conversion failed for bog$DATE. Please inspect the data and do the date conversion yourself.")}
+if (class(bog$WTE)=="factor") bog$WTE <-as.numeric(levels(bog$WTE))[as.integer(bog$WTE) ]               
+if (class(bog$WTE)=="character") bog$WTE <-as.numeric(bog$WTE)
+if (class(bog$FLAG)!="factor") bog$FLAG<- as.factor(bog$FLAG)
+                
+# Convert Missing Values to NA for non-dates
+bog$WTE <- ifelse((trimws(as.character(bog$WTE))==trimws("NA")),NA,bog$WTE)  
+
+# Select just the S2 watershed
+bog = bog %>%
+  filter(PEATLAND == 'S2')
+
+
+#Snow depths
+snow = read.csv('./mef-data/GR_ForestryLab_snow_daily.csv', 
+                na.strings = c('M', 'T'))
+snow$Date<-as.POSIXct(snow$Date,format="%Y-%m-%d")
+
+```
+
+```{r}
+#Aggregate to snow year and sum snow inputs
+snowAnnual = snow %>%
+  mutate(snowYear = ifelse(month(Date) < 10, year(Date), year(Date) + 1)) %>%
+  filter(snowYear > 1948) %>%
+  group_by(snowYear) %>%
+  summarise(totSnow = sum(Snow..inches., na.rm=TRUE))
+
+snowAnnual = snowAnnual %>%
+  mutate(type = ifelse(totSnow > mean(snowAnnual$totSnow), 'High', 'Low'))
+
+head(snowAnnual)
+```
+
+```{r}
+#Find first and last non-zero snow and streamflow values
+snow_bounds = snow %>%
+  mutate(year = year(Date)) %>%
+  group_by(year) %>%
+  summarise(firstNZ = yday(Date)[which((Snow.Depth..inches. != 0) & !is.na(Snow.Depth..inches.))[1]],
+            lastNZ = yday(Date)[tail(which((Snow.Depth..inches. != 0) & (month(Date) < 10) & !is.na(Snow.Depth..inches.)))[5]]) 
+
+snow_bounds_high = snow_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'High'])
+snow_bounds_low = snow_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
+snow_bounds = rbind(snow_bounds_high, snow_bounds_low)
+
+stream_bounds = stream %>%
+  mutate(year = year(DateTime)) %>%
+  group_by(year) %>%
+  #A threshold is set to eliminate the teeny tiny flows that continue dripping into January
+  summarise(firstNZ = yday(DateTime)[which((q.interval > 0.01) & !is.na(q.interval))[1]],
+            lastNZ = yday(DateTime)[tail(which((q.interval > 0.01) & !is.na(q.interval)))[5]]) 
+
+stream_bounds_high = stream_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'High'])
+stream_bounds_low = stream_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
+```
+
+```{r}
+#Aggregate to seasonal 
+# 92 for April 1st
+#105 for April 15th
+precip_seasonal = data.frame(precip) %>%
+  mutate(year = year(DATE)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 289, 'Growing', 'Snow'))) %>%
+  group_by(season, year) %>%
+  summarise(South_PCP = sum(South_PCP))
+
+stream_seasonal = data.frame(stream) %>%
+  mutate(year = year(DateTime)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(DateTime) > lastNZ & yday(DateTime) < 183, 'Melt', ifelse(yday(DateTime) > 182 & yday(DateTime) < 289, 'Growing', 'Snow'))) %>%
+  group_by(season, year) %>%
+  summarise(qInterval = mean(q.interval, na.rm = TRUE)/10)
+
+bog_seasonal = data.frame(bog) %>%
+  mutate(year = year(DATE)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 289, 'Growing', 'Snow'))) %>%
+  group_by(season, year) %>%
+  summarise(WTE = mean(WTE))
+
+snow_seasonal = data.frame(snow) %>%
+  mutate(year = year(Date)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(Date) > lastNZ & yday(Date) < 183, 'Melt', ifelse(yday(Date) > 182 & yday(Date) < 289, 'Growing', 'Snow'))) %>%
+  group_by(season, year) %>%
+  summarise(Snow_in = sum(Snow..inches., na.rm = TRUE))
+
+seasm_melt = seasm %>%
+  select(c(YEAR, LOCATION, season, d.15, d.76, d.137)) %>%
+  pivot_wider(names_from = LOCATION, values_from = c(d.15, d.76, d.137)) %>%
+  rename('year' = 'YEAR')
+
+#merge into dataset
+dat = merge(x = precip_seasonal, stream_seasonal, by = c('season', 'year'), how = 'inner')
+dat = merge(dat, bog_seasonal, by = c('season', 'year'), how = 'inner')
+dat = merge(dat, snow_seasonal, by = c('season', 'year'), how = 'inner')
+dat = merge(dat, seasm_melt, by = c('season', 'year'), how = 'inner') %>% 
+  arrange(year, season) 
+```
+```{r}
+seasm_melt
+```
+
+```{r}
+#Bunch o' boxplots
+par(mfrow = c(2, 5), 
+        mar = c(4, 2, 4, 2))
+
+for(col in colnames(dat)[3:12]){
+  boxplot(dat[, col] ~ dat$season, xlab = ' ')
+  title(col)
+}
+```
+
+## Seasonal Mutual Information
+
+```{r}
+data_seasonal = dat %>%
+  drop_na() %>%
+  relocate(c("qInterval", "year", "season")) %>%
+  #Order seasons so they show up in "Snow", "Melt", "Streamflow" order
+  mutate(season = factor(season, levels = c('Snow', 'Melt', 'Growing')))
+
+summary(data_seasonal)
+```
+
+```{r}
+#Sort into high and low snow year data frames (based on calendar year, not snow year)
+highSnow_seasonal = data_seasonal %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'High'])
+
+lowSnow_seasonal = data_seasonal %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
+
+print(head(highSnow_seasonal))
+print(head(lowSnow_seasonal))
+```
+
+
+```{r}
+## Shift time series
+lagTS = function(x, y, l){
+  #Shift
+  shiftedX = lag(x, n = l)
+  shiftedY = lag(y, n = 0)
+  
+  #Merge into data frame and clip to non-na
+  dat = data.frame(shiftedX, shiftedY) %>%
+    drop_na()
+  
+  return(dat)
+}
+
+#Seasonal calculation
+calc_seasonalQ_contribution_Conditional = function(var, lag, data){
+    temp = c()
+    
+    #Lag timeseries
+    lagDat = lagTS(data[, var], data$qInterval, lag)
+    
+    #Lag autocorrelation
+    lagY = lagTS(data$qInterval, data$qInterval, lag-1)
+        
+    #Attach monthly values
+    lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)],
+                   z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)])
+
+    for(i in unique(data$season)){
+        #filter
+        lagDat_seasonal = lagDat %>% filter(season == i)  
+
+        #calculate mutual information
+        temp = append(temp, natstobits(condinformation(X = discretize(lagDat_seasonal$shiftedX),
+                                          Y = discretize(lagDat_seasonal$shiftedY), 
+                                          S = discretize(lagDat_seasonal$z))))
+    }
+    
+    return(temp)
+}
+
+calc_seasonalQ_correlations = function(var, lag, data){
+  temp = c()
+    
+  #Lag timeseries
+  lagDat = lagTS(data[, var], data$qInterval, lag)
+  
+  #Attach monthly values
+  lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)])
+    
+  for(i in unique(data$season)){
+    #filter 
+    lagDat_seasonal = lagDat %>% filter(season == i)  
+
+    #correlation
+    temp = append(temp, cor(x = lagDat_seasonal$shiftedX, y = lagDat_seasonal$shiftedY))
+
+  }
+  
+  return(temp)
+}
+```
+
+
+```{r}
+vars = c("South_PCP", "WTE", "Snow_in", "d.15_S2E", "d.15_S2S", "d.76_S2E", "d.76_S2S", "d.137_S2E", "d.137_S2S")
+
+buff = 0.2
+
+#Time series based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(lag in seq(1, 2)){
+  seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
+  seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
+  
+  for(v in vars){
+    seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, data_seasonal)
+    seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, data_seasonal)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:3)
+  seasons = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  seasonal_MI_data = seasonal_MI_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  #1 - streamflow, 2 - frost, 3 - melt
+  monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season, y = value, fill = variable)) +
+    #Plot
+    geom_col(position = 'dodge') +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(0, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  seasonal_R_data = seasonal_R_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot_corr = ggplot(data = seasonal_R_data, aes(x = season, y = value, col = variable)) +
+    geom_line() +
+    geom_point() + 
+    scale_color_brewer(palette = "BrBG") + 
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Pearson R') +
+    ggtitle(paste0('Streamflow Contributions at lag ', lag)) +
+    theme(legend.position = 'none',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  fullplot = plot_grid(monthlyplot_corr, monthlyplot, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,3))
+
+  print(fullplot)
+  
+}
+```
+
+```{r}
+#Modified Plot
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(lag in seq(1, 2)){
+  seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
+  seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
+  
+  for(v in vars){
+    seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, data_seasonal)
+    seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, data_seasonal)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:3)
+  seasons = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  seasonal_MI_data = seasonal_MI_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  seasonal_R_data = seasonal_R_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  #Change value sign based on R2 value
+  seasonal_MI_data = seasonal_MI_data %>%
+    mutate(value = ifelse(seasonal_R_data$value < 0, -value, value))
+  
+  #1 - streamflow, 2 - frost, 3 - melt
+  monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season, y = value, fill = variable)) +
+    #Plot
+    geom_col(position = 'dodge') +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  print(monthlyplot)
+}
+```
+
+```{r}
+#Variable based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(v in vars){
+  seasonal_MI_var_data = data.frame(matrix(ncol = 0, nrow = 3))
+  seasonal_R_var_data = data.frame(matrix(ncol = 0, nrow = 3))
+  
+  for(lag in seq(1, 2)){
+    temp = calc_seasonalQ_contribution_Conditional(v, lag, data_seasonal)
+    temp_corr = calc_seasonalQ_correlations(v, lag, data_seasonal)
+    #time shift the MI values
+    seasonal_MI_var_data[lag] = c(temp[(length(temp)-lag+1):length(temp)], temp[1:(length(temp)-lag)])
+    seasonal_R_var_data[lag] = c(temp_corr[(length(temp_corr)-lag+1):length(temp_corr)], temp_corr[1:(length(temp_corr)-lag)])
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:3)
+  seasonal_MI_var_data = seasonal_MI_var_data %>% 
+    mutate(season = x) %>%
+    melt(id.vars = c('season'))
+  
+  seasonalplot_stacked = ggplot(data = seasonal_MI_var_data, aes(x = season, y = value, fill = variable)) +
+    geom_col(position = 'dodge') +
+    scale_fill_brewer(palette = "PuBuGn") + 
+    xlim(1,3) +
+    ylim(0, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) + 
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+  
+  seasonal_R_var_data = seasonal_R_var_data %>% 
+    mutate(season = x) %>%
+    melt(id.vars = c('season'))
+  
+  seasonalplot_corr = ggplot(data = seasonal_R_var_data, aes(x = season, y = value, col = variable)) +
+    geom_line() +
+    geom_point() + 
+    scale_color_brewer(palette = "PuBuGn") + 
+    xlim(1,3) +
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Pearson R') +
+    ggtitle(paste0('Lagged Streamflow Contributions from ', v)) +
+    theme(legend.position = 'none',
+          panel.background = element_blank()) + 
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3")) 
+  
+  fullplot = plot_grid(seasonalplot_corr, seasonalplot_stacked, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,3))
+
+  print(fullplot)
+    
+}
+```
+
+### Redo Mutual Information Analysis on snow breakdown
+
+```{r}
+## High Snow Years
+#Time series based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(lag in seq(1, 2)){
+  seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
+  seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
+  
+  for(v in vars){
+    seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, highSnow_seasonal)
+    seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, highSnow_seasonal)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:3)
+  seasons = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  seasonal_MI_data = seasonal_MI_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  #1 - streamflow, 2 - frost, 3 - melt
+  monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season, y = value, fill = variable)) +
+    #Plot
+    geom_col(position = 'dodge') +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(0, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  seasonal_R_data = seasonal_R_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot_corr = ggplot(data = seasonal_R_data, aes(x = season, y = value, col = variable)) +
+    geom_line() +
+    geom_point() + 
+    scale_color_brewer(palette = "BrBG") + 
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Pearson R') +
+    ggtitle(paste0('Streamflow Contributions at lag ', lag)) +
+    theme(legend.position = 'none',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  fullplot = plot_grid(monthlyplot_corr, monthlyplot, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,3))
+
+  print(fullplot)
+  
+}
+```
+
+    
+```{r}
+#New plot type
+for(lag in seq(1, 2)){
+  seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
+  seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
+  
+  for(v in vars){
+    seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, highSnow_seasonal)
+    seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, highSnow_seasonal)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:3)
+  seasons = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  seasonal_MI_data = seasonal_MI_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  seasonal_R_data = seasonal_R_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  #Change value sign based on R2 value
+  seasonal_MI_data = seasonal_MI_data %>%
+    mutate(value = ifelse(seasonal_R_data$value < 0, -value, value))
+  
+  #1 - streamflow, 2 - frost, 3 - melt
+  monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season, y = value, fill = variable)) +
+    #Plot
+    geom_col(position = 'dodge') +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+  
+  #save
+  save_plot(paste0('./Figures/highsnow_variableMI_lag', lag, '.pdf'), monthlyplot, base_height = 6, base_asp = 1.2)
+
+  print(monthlyplot)
+  
+}
+```
+
+```{r}
+## Low Snow Years
+#Time series based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(lag in seq(1, 2)){
+  seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
+  seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
+  
+  for(v in vars){
+    seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, lowSnow_seasonal)
+    seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, lowSnow_seasonal)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:3)
+  seasons = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  seasonal_MI_data = seasonal_MI_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  #1 - streamflow, 2 - frost, 3 - melt
+  monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season, y = value, fill = variable)) +
+    #Plot
+    geom_col(position = 'dodge') +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(0, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  seasonal_R_data = seasonal_R_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot_corr = ggplot(data = seasonal_R_data, aes(x = season, y = value, col = variable)) +
+    geom_line() +
+    geom_point() + 
+    scale_color_brewer(palette = "BrBG") + 
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Pearson R') +
+    ggtitle(paste0('Streamflow Contributions at lag ', lag)) +
+    theme(legend.position = 'none',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  fullplot = plot_grid(monthlyplot_corr, monthlyplot, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,3))
+
+  print(fullplot)
+  
+}
+```
+
+```{r}
+## New plot type
+for(lag in seq(1, 2)){
+  seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
+  seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
+  
+  for(v in vars){
+    seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, lowSnow_seasonal)
+    seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, lowSnow_seasonal)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:3)
+  seasons = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  seasonal_MI_data = seasonal_MI_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  seasonal_R_data = seasonal_R_data %>% 
+    mutate(season = seasons) %>%
+    gather(variable, value, vars)
+  
+  #Change value sign based on R2 value
+  seasonal_MI_data = seasonal_MI_data %>%
+    mutate(value = ifelse(seasonal_R_data$value < 0, -value, value))
+  
+  #1 - streamflow, 2 - frost, 3 - melt
+  monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season, y = value, fill = variable)) +
+    #Plot
+    geom_col(position = 'dodge') +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) +
+    scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
+                     limits=c("1","2","3"))
+
+  save_plot(paste0('./Figures/lowsnow_variableMI_lag', lag, '.pdf'), monthlyplot, base_height = 6, base_asp = 1.2)
+
+  print(monthlyplot)
+}
+```
+
+## Monthly version
+
+```{r}
+#MOnthly calculation
+calc_monthlyQ_contribution_Conditional = function(var, lag, data){
+    temp = c()
+    
+    #Lag timeseries
+    lagDat = lagTS(data[, var], data$qInterval, lag)
+    
+    #Lag autocorrelation
+    lagY = lagTS(data$qInterval, data$qInterval, lag-1)
+        
+    #Attach monthly values
+    lagDat = cbind(lagDat, month = data$month[0:(length(data$month)-lag)],
+                   z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)])
+    
+    for(i in seq(1, 12)){
+        #filter
+        lagDat_monthly = lagDat %>% filter(month == i)  
+
+        #calculate mutual information
+        temp = append(temp, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX),
+                                          Y = discretize(lagDat_monthly$shiftedY), 
+                                          S = discretize(lagDat_monthly$z))))
+    }
+    
+    return(temp)
+}
+
+
+calc_monthlyQ_correlations = function(var, lag, data){
+  temp = c()
+    
+  #Lag timeseries
+  lagDat = lagTS(data[, var], data$qInterval, lag)
+  
+  #Attach monthly values
+  lagDat = cbind(lagDat, month = data$month[0:(length(data$month)-lag)])
+    
+  for(i in seq(1, 12)){
+        #filter
+        lagDat_monthly = lagDat %>% filter(month == i)  
+
+        #correlation
+        temp = append(temp, cor(x = lagDat_monthly$shiftedX, y = lagDat_monthly$shiftedY))
+
+  }
+  
+  return(temp)
+}
+```
+
+```{r}
+#Seasonal Soil Moisture RAW
+seasmURL  <- "https://pasta.lternet.edu/package/data/eml/edi/612/2/9769461f3732c922a9af819587922c86" 
+seasmInfile <- tempfile()
+try(download.file(seasmURL, seasmInfile, method="curl"))
+if (is.na(file.size(seasmInfile))) download.file(seasmURL,seasmInfile,method="auto")
+
+seasm_raw <-read.csv(seasmInfile, header=F, skip=1, sep=",",
+                 col.names=c("DATE", "LOCATION", "d.15", "d.46",     
+                    "d.76", "d.107", "d.137", "d.168", "d.198", "d.229",     
+                    "d.259", "d.290", "d.320"), check.names=TRUE)
+
+               
+unlink(seasmInfile)
+tmp1DATE<-as.Date(seasm_raw$DATE,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(seasm_raw[seasm_raw$DATE != "",]) == length(tmp1DATE[!is.na(tmp1DATE)])){seasm_raw$DATE <- tmp1DATE } else {print("Date conversion failed for dt1$DATE. Please inspect the data and do the date conversion yourself.")}
+
+# Select just the S2 watershed
+seasm_raw = seasm_raw %>%
+  filter(LOCATION %in% c('S2E', 'S2W','S2S'))
+```
+
+```{r}
+#Aggregate to monthly 
+precip_monthly = data.frame(precip) %>%
+  mutate(month = month(DATE)) %>%
+  mutate(year = year(DATE)) %>%
+  group_by(month, year) %>%
+  summarise(South_PCP = sum(South_PCP))
+
+stream_monthly = data.frame(stream) %>%
+  mutate(year = year(DateTime)) %>%
+  mutate(month = month(DateTime)) %>%
+  group_by(month, year) %>%
+  summarise(qInterval = mean(q.interval, na.rm = TRUE)/10)
+
+bog_monthly = data.frame(bog) %>%
+  mutate(year = year(DATE)) %>%
+  mutate(month = month(DATE)) %>%
+  group_by(month, year) %>%
+  summarise(WTE = mean(WTE))
+
+snow_monthly = data.frame(snow) %>%
+  mutate(year = year(Date)) %>%
+  mutate(month = month(Date)) %>%
+  group_by(month, year) %>%
+  summarise(Snow_in = sum(Snow..inches., na.rm = TRUE))
+
+seasm_monthly = seasm_raw %>%
+  mutate(month = month(DATE)) %>%
+  mutate(year = year(DATE)) %>%
+  group_by(month, year, LOCATION) %>%
+  summarise_at(vars(d.15:d.320), mean, na.rm = TRUE) %>%
+  select(c(month, year, LOCATION, d.15, d.76, d.137)) %>%
+  pivot_wider(names_from = LOCATION, values_from = c(d.15, d.76, d.137), id_cols = c(month, year))
+
+#merge into dataset
+dat_monthly = merge(x = precip_monthly, stream_monthly, by = c('month', 'year'), how = 'outer', all = TRUE)
+dat_monthly = merge(dat_monthly, bog_monthly, by = c('month', 'year'), how = 'outer', all = TRUE)
+dat_monthly = merge(dat_monthly, snow_monthly, by = c('month', 'year'), how = 'outer', all = TRUE)
+dat_monthly = merge(dat_monthly, seasm_monthly, by = c('month', 'year'), how = 'outer', all = TRUE) %>% 
+  arrange(year, month) 
+
+#Cut off before 1968
+dat_monthly = dat_monthly %>%
+  filter(year > 1967)
+
+#Nearest neighbor fill nans in soil moisture
+dat_monthly = data.frame(na.fill(dat_monthly, "extend"))
+```
+
+```{r}
+vars = c("South_PCP", "WTE", "Snow_in", "d.15_S2E", "d.15_S2S", "d.76_S2E", "d.76_S2S", "d.137_S2E", "d.137_S2S")
+
+buff = 0.2
+
+#Time series based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(lag in seq(1, 6)){
+  monthly_MI_data = data.frame(matrix(ncol = 0, nrow = 12))
+  monthly_R_data = data.frame(matrix(ncol = 0, nrow = 12))
+  
+  for(v in vars){
+    monthly_MI_data[v] = calc_monthlyQ_contribution_Conditional(v, lag, dat_monthly)
+    monthly_R_data[v] = calc_monthlyQ_correlations(v, lag, dat_monthly)
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:12)
+  months = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
+  monthly_MI_data = monthly_MI_data %>% 
+    mutate(month = months) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot = ggplot(data = monthly_MI_data, aes(x = month, y = value, fill = variable)) +
+    #Plot
+    geom_area() +
+    scale_fill_brewer(palette = "BrBG") + 
+    ylim(0, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) + 
+    scale_x_continuous(n.breaks=12) 
+
+  monthly_R_data = monthly_R_data %>% 
+    mutate(month = months) %>%
+    gather(variable, value, vars)
+  
+  monthlyplot_corr = ggplot(data = monthly_R_data, aes(x = month, y = value, col = variable)) +
+    geom_line() +
+    geom_point() + 
+    scale_color_brewer(palette = "BrBG") + 
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Pearson R') +
+    ggtitle(paste0('Streamflow Contributions at lag ', lag)) +
+    theme(legend.position = 'none',
+          panel.background = element_blank()) +
+    scale_x_continuous(n.breaks = 12)
+
+  fullplot = plot_grid(monthlyplot_corr, monthlyplot, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,3))
+
+  print(fullplot)
+  
+}
+```
+
+```{r}
+#Variable based plots
+#Transfer Entropy, i.e. Conditional Mutual Information
+for(v in vars){
+  monthly_MI_var_data = data.frame(matrix(ncol = 0, nrow = 12))
+  monthly_R_var_data = data.frame(matrix(ncol = 0, nrow = 12))
+  
+  for(lag in seq(1, 6)){
+    temp = calc_monthlyQ_contribution_Conditional(v, lag, dat_monthly)
+    temp_corr = calc_monthlyQ_correlations(v, lag, dat_monthly)
+    #time shift the MI values
+    monthly_MI_var_data[lag] = c(temp[(length(temp)-lag+1):length(temp)], temp[1:(length(temp)-lag)])
+    monthly_R_var_data[lag] = c(temp_corr[(length(temp_corr)-lag+1):length(temp_corr)], temp_corr[1:(length(temp_corr)-lag)])
+  }
+  
+  #Plot stacked time series (plus shifted data)
+  x  = seq(1:12)
+  monthly_MI_var_data = monthly_MI_var_data %>% 
+    mutate(month = x) %>%
+    melt(id.vars = c('month'))
+  
+ monthlyplot_stacked = ggplot(data = monthly_MI_var_data, aes(x = month, y = value, fill = variable)) +
+    geom_area() +
+    scale_fill_brewer(palette = "PuBuGn") + 
+    xlim(1,12) +
+    ylim(0, 1) + 
+    xlab(' ') + 
+    ylab('Conditional Mutual Information') +
+    theme(legend.position = 'bottom',
+          panel.background = element_blank()) +
+    scale_x_continuous(n.breaks = 12)
+   
+  
+  monthly_R_var_data = monthly_R_var_data %>% 
+    mutate(month = x) %>%
+    melt(id.vars = c('month'))
+  
+  monthlyplot_corr = ggplot(data = monthly_R_var_data, aes(x = month, y = value, col = variable)) +
+    geom_line() +
+    geom_point() + 
+    scale_color_brewer(palette = "PuBuGn") + 
+    xlim(1,12) +
+    ylim(-1, 1) + 
+    xlab(' ') + 
+    ylab('Pearson R') +
+    ggtitle(paste0('Lagged Streamflow Contributions from ', v)) +
+    theme(legend.position = 'none',
+          panel.background = element_blank()) + 
+    scale_x_continuous(n.breaks = 12)
+  
+  fullplot = plot_grid(monthlyplot_corr, monthlyplot_stacked, 
+            ncol = 1,
+            axis = 'l',
+            align = 'v',
+            rel_heights = c(2,3))
+
+  print(fullplot)
+    
+}
+```
+
+
