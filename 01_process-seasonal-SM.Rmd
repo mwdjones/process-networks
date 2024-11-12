@@ -231,12 +231,30 @@ seasm = seasm %>%
 ```{r}
 seasm
 ```
+```{r}
+#Lump and average data -- remove years that don't have all three seasons
+
+#First remove the S2W sensors - there are too few data points and 
+#group
+seasm_grouped = seasm %>%
+  filter(LOCATION %in% c('S2E', 'S2S')) %>%
+  mutate(YEAR = year(DATE)) %>%
+  group_by(YEAR, LOCATION, season) %>%
+  summarise_at(vars(d.15:d.320), mean, na.rm = TRUE)
+
+#remove if not all three seasons
+seasm_reduced = seasm_grouped %>%
+  group_by(YEAR, LOCATION) %>% 
+  filter(all(c('Snow', 'Melt', 'Growing') %in% season))
+
+seasm_reduced
+```
 
 ```{r}
 #Ttest and tukey test
-model.46=lm( d.46 ~ LOCATION*season, data = seasm)
+model.46=lm( d.46 ~ LOCATION*season, data = seasm_reduced)
 anova.46=aov(model.46)
-model.168=lm( d.168 ~ LOCATION*season, data = seasm)
+model.168=lm( d.168 ~ LOCATION*season, data = seasm_reduced)
 anova.168=aov(model.168)
  
 # Tukey test to study each pair of treatment
@@ -259,7 +277,7 @@ cld.168 <- multcompLetters4(anova.168, tukey.168)
 labs.46 = as.data.frame.list(cld.46$`LOCATION:season`)$Letters
 labs.168 = as.data.frame.list(cld.168$`LOCATION:season`)$Letters
 
-cm46 = ggplot(data = seasm, aes(x = LOCATION, y = d.46)) +
+cm46 = ggplot(data = seasm_reduced, aes(x = LOCATION, y = d.46)) +
   geom_boxplot(aes(fill = LOCATION)) + 
   facet_grid(.~season) +
   xlab(' ') +
@@ -269,7 +287,7 @@ cm46 = ggplot(data = seasm, aes(x = LOCATION, y = d.46)) +
         panel.background = element_blank())
 
 
-cm168= ggplot(data = seasm, aes(x = LOCATION, y = d.168)) +
+cm168= ggplot(data = seasm_reduced, aes(x = LOCATION, y = d.168)) +
   geom_boxplot(aes(fill = LOCATION)) + 
   facet_grid(.~season) +
   xlab(' ') +
@@ -288,69 +306,7 @@ save_plot(paste0(fig_save, 'seasonalSM_boxplot.pdf'), smComp, base_height = 6, b
 smComp
 ```
 
-Little test to see if removing the extra data makes a difference (it doesn't)
 
-```{r}
-#try removing data not collected within the same seasonal window
-seasm_reduced = seasm %>%
-  filter(!((yday(DATE) < 100) | (yday(DATE) > 180 & yday(DATE) < 240 ) | (yday(DATE) > 340)))
-
-ggplot(data = seasm_reduced, aes(x = yday(DATE), y = year(DATE))) + 
-  #melt season (April 1st to July 1st)
-  geom_rect(aes(xmin = 105, xmax = 183, ymin = min(year(DATE)), ymax = max(year(DATE))), fill = 'lightblue') +
-  #streamflow season (July 1st to Oct 15th)
-  geom_rect(aes(xmin = 183, xmax = 289, ymin = min(year(DATE)), ymax = max(year(DATE))), fill = 'lightgreen') + 
-  geom_jitter(aes(col = LOCATION), width = 4) + 
-  xlab('Day of the Year') + 
-  ylab('Year') + 
-  theme(legend.position = 'top',
-        aspect.ratio = 1,
-        panel.background = element_blank())
-  
-
-cm46 = ggplot(data = seasm_reduced, aes(x = LOCATION, y = d.46)) +
-  geom_boxplot(aes(fill = LOCATION)) + 
-  facet_grid(.~season) +
-  xlab(' ') +
-  ylab('SWC at 46cm') + 
-  theme(legend.position = 'right',
-        aspect.ratio = 1,
-        panel.background = element_blank())
-
-cm168= ggplot(data = seasm_reduced, aes(x = LOCATION, y = d.168)) +
-  geom_boxplot(aes(fill = LOCATION)) + 
-  facet_grid(.~season) +
-  xlab(' ') +
-  ylab('SWC at 168cm') + 
-  theme(legend.position = 'none',
-        aspect.ratio = 1,
-        panel.background = element_blank())
-
-smComp = plot_grid(cm46, cm168,
-          ncol = 1,
-          align="hv")
-
-smComp
-```
-
-```{r}
-#Lump and average data -- remove years that don't have all three seasons
-
-#First remove the S2W sensors - there are too few data points and 
-#group
-seasm_grouped = seasm %>%
-  filter(LOCATION %in% c('S2E', 'S2S')) %>%
-  mutate(YEAR = year(DATE)) %>%
-  group_by(YEAR, LOCATION, season) %>%
-  summarise_at(vars(d.15:d.320), mean, na.rm = TRUE)
-
-#remove if not all three seasons
-seasm_reduced = seasm_grouped %>%
-  group_by(YEAR, LOCATION) %>% 
-  filter(all(c('Snow', 'Melt', 'Growing') %in% season))
-
-seasm_reduced
-```
 
 ```{r}
 #Export
