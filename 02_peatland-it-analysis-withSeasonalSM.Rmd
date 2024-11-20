@@ -344,8 +344,11 @@ lagTS = function(x, y, l){
 }
 
 #Seasonal calculation
-calc_seasonalQ_contribution_Conditional = function(var, lag, data){
+calc_seasonalQ_contribution_Conditional = function(var, lag, data, subset = FALSE, listYears = NULL){
     t = c()
+    
+    #Sort
+    data = data[order(data$year, data$season),]
     
     #Lag timeseries
     lagDat = lagTS(data[, var], data$qInterval, lag)
@@ -355,11 +358,21 @@ calc_seasonalQ_contribution_Conditional = function(var, lag, data){
         
     #Attach monthly values
     lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)],
-                   z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)])
+                   z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)], 
+                   years = data$year[0:(length(data$year)-lag)])
+
 
     for(i in c('Snow', 'Melt', 'Growing')){
-        #filter
-        lagDat_seasonal = lagDat %>% filter(season == i)  
+        #filter season
+        lagDat_seasonal = lagDat %>% 
+          filter(season == i)
+        
+        #filter years
+        if(subset == TRUE){
+          lagDat_seasonal = lagDat_seasonal %>%
+            filter(years %in% listYears)
+        }
+        
 
         #calculate mutual information
         t = append(t, natstobits(condinformation(X = discretize(lagDat_seasonal[, var]),
@@ -372,21 +385,35 @@ calc_seasonalQ_contribution_Conditional = function(var, lag, data){
     return(t)
 }
 
-calc_seasonalQ_correlations = function(var, lag, data){
+calc_seasonalQ_correlations = function(var, lag, data, subset = FALSE, listYears = NULL){
   t = c()
+  
+  #Sort
+  data = data[order(data$year, data$season),]
     
+  #print(paste0("Variable: ", var, " Lag: ", lag))
+  #print("-----")
   #Lag timeseries
   lagDat = lagTS(data[, var], data$qInterval, lag)
   
   #Attach monthly values
-  lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)])
+  lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)], 
+                 years = data$year[0:(length(data$year)-lag)])
     
   for(i in c('Snow', 'Melt', 'Growing')){
-    #filter 
-    lagDat_seasonal = lagDat %>% filter(season == i)  
+    #filter seasons
+    lagDat_seasonal = lagDat %>% filter(season == i) 
+    
+    #filter years
+    if(subset == TRUE){
+        lagDat_seasonal = lagDat_seasonal %>%
+          filter(years %in% listYears)
+    }
 
     #correlation
-    t = append(t, cor(x = lagDat_seasonal[,var], y = lagDat_seasonal$shiftedY))
+    r = cor(x = lagDat_seasonal[,var], y = lagDat_seasonal$shiftedY)
+    #print(paste0("Season: ", i, ", R2 = ", r))
+    t = append(t, r)
 
   }
   
@@ -463,14 +490,29 @@ plotMI_original = function(data){
   }
 }
 
-plotMI_modified = function(data, title){
+plotMI_modified = function(data, title, years = NULL){
+  
+    #set factor levels
+    data = data %>%
+      mutate(season = factor(season, levels = c("Snow", "Melt", "Growing")))
+      
     for(lag in seq(1, 2)){
       seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
       seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
       
       for(v in vars){
-        seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, data)
-        seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, data)
+        
+        if(is.null(years)){
+          seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, data)
+          seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, data)
+        }
+        else{
+          seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag,
+                                                                        data, subset = TRUE, listYears = years)
+          seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag,
+                                                           data, subset = TRUE, listYears = years)
+        }
+        
       }
       
       #Plot stacked time series (plus shifted data)
@@ -536,9 +578,7 @@ plotMI_variables = function(data){
       xlab(' ') + 
       ylab('Conditional Mutual Information') +
       theme(legend.position = 'bottom',
-            panel.background = element_blank()) #+ 
-      #scale_x_discrete(labels = c('Streamflow', 'Frost', 'Melt'), 
-      #                 limits=c("1","2","3"))
+            panel.background = element_blank()) 
     
     seasonal_R_var_data = seasonal_R_var_data %>% 
       mutate(season = x) %>%
@@ -573,33 +613,46 @@ plotMI_variables = function(data){
 ## Plots
 
 ```{r}
+#All data
+plotMI_modified(data_seasonal, "All Years")
+```
+
+```{r}
 ## High Snow Years
-plotMI_modified(highSnow_seasonal, 'High Snow Years')
+plotMI_modified(data_seasonal, 'High Snow Years', unique(highSnow_seasonal$year))
 
 ## Low Snow Years
-plotMI_modified(lowSnow_seasonal, 'Low Snow Years')
+plotMI_modified(data_seasonal, 'Low Snow Years', unique(lowSnow_seasonal$year))
 ```
 
 ```{r}
 ## High Temp Years
-plotMI_modified(highTemp_seasonal, 'High Temp Years')
+plotMI_modified(data_seasonal, 'High Temp Years', unique(highTemp_seasonal$year))
 
 ## Low Temp Years
-plotMI_modified(lowTemp_seasonal, 'Low Temp Years')
+plotMI_modified(data_seasonal, 'Low Temp Years', unique(lowTemp_seasonal$year))
 ```
 
 ```{r}
 ## High Temp, High Snow Years
 # Not possible - Only 1 data pt
 
+print("High Temp - Low Snow")
+print("-----------------------------")
 ## High Temp, Low Snow
-plotMI_modified(lowShighT_seasonal,'High Temp, Low Snow')
+plotMI_modified(data_seasonal,'High Temp, Low Snow', unique(lowShighT_seasonal$year))
 
+
+print("Low Temp - High Snow")
+print("-----------------------------")
 ## Low Temp, High Snow
-plotMI_modified(highSlowT_seasonal, 'Low Temp, High Snow')
+plotMI_modified(data_seasonal, 'Low Temp, High Snow', unique(highSlowT_seasonal$year))
 
+
+print("Low Temp - Low Snow")
+print("-----------------------------")
 ## Low Temp, Low Snow
-plotMI_modified(lowSlowT_seasonal, 'Low Temp, Low Snow')
+plotMI_modified(data_seasonal, 'Low Temp, Low Snow', unique(lowSlowT_seasonal$year))
 ```
 
 ## Monthly version
