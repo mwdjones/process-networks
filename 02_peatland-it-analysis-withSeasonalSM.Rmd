@@ -353,13 +353,26 @@ calc_seasonalQ_contribution_Conditional = function(var, lag, data, subset = FALS
     #Lag timeseries
     lagDat = lagTS(data[, var], data$qInterval, lag)
     
-    #Lag autocorrelation
-    lagY = lagTS(data$qInterval, data$qInterval, lag-1)
-        
-    #Attach monthly values
-    lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)],
-                   z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)], 
-                   years = data$year[0:(length(data$year)-lag)])
+    if(lag > 0){
+      #Lag autocorrelation
+      lagY = lagTS(data$qInterval, data$qInterval, lag-1)
+          
+      #Attach monthly values
+      lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)],
+                     z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)], 
+                     years = data$year[0:(length(data$year)-lag)])
+    }
+    else if(lag == 0){
+      #lag autocorrelation
+      lagY = lagTS(data$qInterval, data$qInterval, 1)
+      
+      #Attach monthly values
+      lagDat = cbind(lagDat[2:length(lagDat$shiftedY),],
+                     season = data$season[2:length(data$season)],
+                     z = lagY$shiftedX, 
+                     years = data$year[2:length(data$year)])
+          
+    }
 
 
     for(i in c('Snow', 'Melt', 'Growing')){
@@ -431,7 +444,7 @@ buff = 0.2
 plotMI_original = function(data){
   #Time series based plots
   #Transfer Entropy, i.e. Conditional Mutual Information
-  for(lag in seq(1, 2)){
+  for(lag in seq(0, 2)){
     seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
     seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
     
@@ -496,7 +509,7 @@ plotMI_modified = function(data, title, years = NULL){
     data = data %>%
       mutate(season = factor(season, levels = c("Snow", "Melt", "Growing")))
       
-    for(lag in seq(1, 2)){
+    for(lag in seq(0, 2)){
       seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
       seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
       
@@ -517,7 +530,13 @@ plotMI_modified = function(data, title, years = NULL){
       
       #Plot stacked time series (plus shifted data)
       x  = c("Snow", "Melt", "Growing")
-      seasons = c(x[(lag+1:(length(x)-lag))], x[1:lag])
+      if(lag > 0){
+        seasons = c(x[(lag+1:(length(x)-lag))], x[1:lag])
+      }
+      else if(lag == 0){
+        seasons = x
+      }
+
       seasonal_MI_data = seasonal_MI_data %>% 
          mutate(season_source = factor(x, levels = c("Snow", "Melt", "Growing"))) %>%
          mutate(season_target = factor(seasons, levels = c("Snow", "Melt", "Growing"))) %>%
@@ -556,7 +575,7 @@ plotMI_variables = function(data){
     seasonal_MI_var_data = data.frame(matrix(ncol = 0, nrow = 3))
     seasonal_R_var_data = data.frame(matrix(ncol = 0, nrow = 3))
     
-    for(lag in seq(1, 2)){
+    for(lag in seq(0, 2)){
       temp = calc_seasonalQ_contribution_Conditional(v, lag, data)
       temp_corr = calc_seasonalQ_correlations(v, lag, data)
       #time shift the MI values
