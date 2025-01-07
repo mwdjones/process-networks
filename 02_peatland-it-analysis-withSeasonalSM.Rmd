@@ -31,7 +31,12 @@ library(infotheo)
 library(stringr)
 library(latex2exp)
 library(Hmisc)
+library(plotly)
 ```
+
+# Data Import
+
+Including: 10 minute soil moisture, seasonal soil moisture, precipitation, streamflow, bog well WTE, temperature, and snow depth from GR
 
 ```{r}
 #Import Soil Moisture and PDSI data
@@ -148,6 +153,8 @@ snow$Date<-as.POSIXct(snow$Date,format="%Y-%m-%d")
 
 ## Snow Year Aggregation
 
+Summarized the amount of snow that fell between October 1st and September 30th of the following year and allocates a 'high snow' and 'low snow' depending on if the total snowfall input is above or below the 70 year mean. 
+
 ```{r}
 #Aggregate to snow year and sum snow inputs
 snowAnnual = snow %>%
@@ -157,10 +164,13 @@ snowAnnual = snow %>%
   summarise(totSnow = sum(Snow..inches., na.rm=TRUE))
 
 snowAnnual = snowAnnual %>%
-  mutate(typeS = ifelse(totSnow > mean(snowAnnual$totSnow), 'High', 'Low'))
+  mutate(typeS = ifelse(totSnow > mean(snowAnnual$totSnow), 'High', 'Low')) %>%
+  mutate(year = snowYear) 
 
 head(snowAnnual)
 ```
+
+Finds the first day of the calendar year in the spring (aka water year in the spring) where snow is persistent on the ground and the last day of the water year where snow is persistent on the year and divides them into high and low snow years so that the 'snow season' can be specified based on a dynamic day where snow disapears, not a fixed date. 
 
 ```{r}
 #Find first and last non-zero snow and streamflow values
@@ -189,11 +199,12 @@ snow_bounds = rbind(snow_bounds_high, snow_bounds_low)
 #  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
 ```
 
-
 #Winter Temperature Aggregation
 
+Similar to the snow dynamics, this allocates the seasonality based on the dynamic snow dates listed above and then takes the mean temperature over the designated 'snow' season. 
+
 ```{r}
-#Find average winter temperatures based on the values in 'snow_bounds'
+#Divide seasonal temperatures based on the values in 'snow_bounds'
 temp_seasons = temp %>%
   filter(STATION == 'South') %>%
   mutate(MEANC = (MAXC + MINC)/2) %>%
@@ -205,13 +216,60 @@ temp_seasons = temp %>%
   group_by(season, snowYear) %>%
   summarise(MEANC = mean(MEANC, na.rm = TRUE)) %>%
   rename('year' = 'snowYear')
-  
+
+#Find average snow temperatures
 winterTemp = temp_seasons %>%
   filter(season == 'Snow') %>%
-  mutate(typeT = ifelse(MEANC > mean(MEANC), 'High', 'Low'))
+  mutate(typeT_snow = ifelse(MEANC > mean(MEANC), 'High', 'Low'))
+
+#Find average growing temperatures 
+growingTemp = temp_seasons %>%
+  filter(season == 'Growing') %>%
+  mutate(typeT_growing = ifelse(MEANC > mean(MEANC), 'High', 'Low'))
+
+#Find average melt temperatures 
+meltTemp = temp_seasons %>%
+  filter(season == 'Melt') %>%
+  mutate(typeT_melt = ifelse(MEANC > mean(MEANC), 'High', 'Low'))
+```
+
+```{r}
+#Repeat for precipitation
+#Divide seasonal precipitation based on the values in 'snow_bounds'
+precip_seasons = precip %>%
+  mutate(year = year(DATE)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(snowYear = ifelse(month(DATE) < 10, year(DATE), year(DATE) + 1)) %>%
+  filter(snowYear > 1948) %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 275, 'Growing', 'Snow'))) %>%
+  group_by(season, snowYear) %>%
+  summarise(totP = sum(South_PCP, na.rm = TRUE)) %>%
+  rename('year' = 'snowYear')
+
+#Find average snow temperatures
+winterPrecip = precip_seasons %>%
+  filter(season == 'Snow') %>%
+  mutate(typeP_snow = ifelse(totP > mean(totP), 'High', 'Low'))
+
+#Find average growing temperatures 
+growingPrecip = precip_seasons %>%
+  filter(season == 'Growing') %>%
+  mutate(typeP_growing = ifelse(totP > mean(totP), 'High', 'Low'))
+
+#Find average melt temperatures 
+meltPrecip = precip_seasons %>%
+  filter(season == 'Melt') %>%
+  mutate(typeP_melt = ifelse(totP > mean(totP), 'High', 'Low'))
+
+#Total annual precipitation
+annualPrecip = precip_seasons %>%
+  group_by(year) %>%
+  summarise(totP = sum(totP)) %>%
+  mutate(typeP = ifelse(totP > mean(totP), 'High', 'Low'))
   
 ```
 
+Aggreagate everything to a seasonal basis and merge into one dataframe.
 
 ```{r}
 #Aggregate to seasonal 
@@ -286,6 +344,8 @@ for(col in colnames(dat)[3:12]){
 
 ## Seasonal Mutual Information
 
+Transfer entropy is now calculated as lagged mutual information by taking a variable from a single season and comparing it to another variable of another season at a specified lag to determine the amount of 'information' or correlation that a variable from the previous season (or two seasons ago) may have on a variable in the current season. For simplicity the 'sink' variable is defined as streamflow and all other variables are considered to be 'source' variables at lags of 1-2 seasons. 
+
 ```{r}
 data_seasonal = dat %>%
   drop_na() %>%
@@ -309,23 +369,44 @@ lowSnow_seasonal = data_seasonal %>%
 
 #Temp only
 highTemp_seasonal = data_seasonal %>%
-  filter(year %in% winterTemp$year[winterTemp$typeT == 'High'])
+  filter(year %in% winterTemp$year[winterTemp$typeT_snow == 'High'])
 
 lowTemp_seasonal = data_seasonal %>%
-  filter(year %in% winterTemp$year[winterTemp$typeT == 'Low'])
+  filter(year %in% winterTemp$year[winterTemp$type_snow == 'Low'])
 
 #Both 
 highShighT_seasonal = data_seasonal %>%
-  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'High']) & (year %in% winterTemp$year[winterTemp$typeT == 'High']))
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'High']) &
+           (year %in% winterTemp$year[winterTemp$typeT_snow == 'High']))
 
 lowShighT_seasonal = data_seasonal %>%
-  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low']) & (year %in% winterTemp$year[winterTemp$typeT == 'High']))
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low']) &
+           (year %in% winterTemp$year[winterTemp$typeT_snow == 'High']))
 
 highSlowT_seasonal = data_seasonal %>%
-  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'High']) & (year %in% winterTemp$year[winterTemp$typeT == 'Low']))
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'High']) &
+           (year %in% winterTemp$year[winterTemp$typeT_snow == 'Low']))
 
 lowSlowT_seasonal = data_seasonal %>%
-  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low']) & (year %in% winterTemp$year[winterTemp$typeT == 'Low']))
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low']) &
+           (year %in% winterTemp$year[winterTemp$typeT_snow == 'Low']))
+
+#Annual Snow and Annual Precip 
+highShighP_seasonal = data_seasonal %>%
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'High']) &
+           (year %in% annualPrecip$year[annualPrecip$typeP == 'High']))
+
+lowShighP_seasonal = data_seasonal %>%
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low']) &
+           (year %in% annualPrecip$year[annualPrecip$typeP == 'High']))
+
+highSlowP_seasonal = data_seasonal %>%
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'High']) &
+           (year %in% annualPrecip$year[annualPrecip$typeP == 'Low']))
+
+lowSlowP_seasonal = data_seasonal %>%
+  filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low']) &
+           (year %in% annualPrecip$year[annualPrecip$typeP == 'Low']))
 ```
 
 
@@ -631,10 +712,14 @@ plotMI_variables = function(data){
 
 ## Plots
 
+Considering first all data together, not separated by annual climatological or hydrological conditions. 
+
 ```{r}
 #All data
 plotMI_modified(data_seasonal, "All Years")
 ```
+
+Then, we could separate data by the high or low snow year designation and plot the same diagrams separated by snow regime. 
 
 ```{r}
 ## High Snow Years
@@ -644,6 +729,8 @@ plotMI_modified(data_seasonal, 'High Snow Years', unique(highSnow_seasonal$year)
 plotMI_modified(data_seasonal, 'Low Snow Years', unique(lowSnow_seasonal$year))
 ```
 
+or, by winter temperature. 
+
 ```{r}
 ## High Temp Years
 plotMI_modified(data_seasonal, 'High Temp Years', unique(highTemp_seasonal$year))
@@ -651,6 +738,8 @@ plotMI_modified(data_seasonal, 'High Temp Years', unique(highTemp_seasonal$year)
 ## Low Temp Years
 plotMI_modified(data_seasonal, 'Low Temp Years', unique(lowTemp_seasonal$year))
 ```
+
+Or even by both winter temperature and snow regime. 
 
 ```{r}
 ## High Temp, High Snow Years
@@ -674,251 +763,170 @@ print("-----------------------------")
 plotMI_modified(data_seasonal, 'Low Temp, Low Snow', unique(lowSlowT_seasonal$year))
 ```
 
-## Monthly version
-
 ```{r}
-#MOnthly calculation
-calc_monthlyQ_contribution_Conditional = function(var, lag, data){
-    temp = c()
-    
-    #Lag timeseries
-    lagDat = lagTS(data[, var], data$qInterval, lag)
-    
-    #Lag autocorrelation
-    lagY = lagTS(data$qInterval, data$qInterval, lag-1)
-        
-    #Attach monthly values
-    lagDat = cbind(lagDat, month = data$month[0:(length(data$month)-lag)],
-                   z = lagY$shiftedY[0:(length(lagY$shiftedY) - 1)])
-    
-    for(i in seq(1, 12)){
-        #filter
-        lagDat_monthly = lagDat %>% filter(month == i)  
+#Version with snowfall and precipitation on annual basis
 
-        #calculate mutual information
-        temp = append(temp, natstobits(condinformation(X = discretize(lagDat_monthly$shiftedX),
-                                          Y = discretize(lagDat_monthly$shiftedY), 
-                                          S = discretize(lagDat_monthly$z))))
-    }
-    
-    return(temp)
-}
+print("High Precip - Low Snow")
+print("-----------------------------")
+## High Precip, High Snow Years
+plotMI_modified(data_seasonal,'High Precip, Low Snow', unique(lowShighP_seasonal$year))
+
+print("High Precip - Low Snow")
+print("-----------------------------")
+## High Precip, Low Snow
+plotMI_modified(data_seasonal,'High Precip, Low Snow', unique(lowShighP_seasonal$year))
 
 
-calc_monthlyQ_correlations = function(var, lag, data){
-  temp = c()
-    
-  #Lag timeseries
-  lagDat = lagTS(data[, var], data$qInterval, lag)
-  
-  #Attach monthly values
-  lagDat = cbind(lagDat, month = data$month[0:(length(data$month)-lag)])
-    
-  for(i in seq(1, 12)){
-        #filter
-        lagDat_monthly = lagDat %>% filter(month == i)  
+print("Low Precip - High Snow")
+print("-----------------------------")
+#Not enough data points
+## Low Precip, High Snow
+#plotMI_modified(data_seasonal, 'Low Precip, High Snow', unique(highSlowP_seasonal$year))
 
-        #correlation
-        temp = append(temp, cor(x = lagDat_monthly$shiftedX, y = lagDat_monthly$shiftedY))
 
-  }
-  
-  return(temp)
-}
+print("Low Precip - Low Snow")
+print("-----------------------------")
+## Low Temp, Low Snow
+plotMI_modified(data_seasonal, 'Low Precip, Low Snow', unique(lowSlowP_seasonal$year))
 ```
 
+But, how do we determine which of these confouding climatological or hydrological variables are the most influential in determining time-lagged hydrological connectivity? There are a variety of options that all influence snow accumulation and melt and soil frost dynamics: Annual Precipitation, Snow Accumulation, Winter Temperature, Spring Temperature, Annual Temperature, Fall Precipitation, etc. If we think that this connectivity is driven predominantly by soil frost depth and timing, then we need to look at which of these variables end up with the most distict frost scenarios. 
+
+# Frost Analysis by Hydrology and Climatology Variables
+
+Import frost depth data from Marcell:
+
 ```{r}
-#Seasonal Soil Moisture RAW
-seasmURL  <- "https://pasta.lternet.edu/package/data/eml/edi/612/2/9769461f3732c922a9af819587922c86" 
-seasmInfile <- tempfile()
-try(download.file(seasmURL, seasmInfile, method="curl"))
-if (is.na(file.size(seasmInfile))) download.file(seasmURL,seasmInfile,method="auto")
+#Upland Frost Depths
+frostUplandURL  <- "https://pasta.lternet.edu/package/data/eml/edi/571/3/cf159d50f0e80a99b14830103eec9297" 
+frostUplandInfile <- tempfile()
+try(download.file(frostUplandURL, frostUplandInfile, method="curl"))
+if (is.na(file.size(frostUplandInfile))) download.file(frostUplandURL, frostUplandInfile, method="auto")
 
-seasm_raw <-read.csv(seasmInfile, header=F, skip=1, sep=",",
-                 col.names=c("DATE", "LOCATION", "d.15", "d.46",     
-                    "d.76", "d.107", "d.137", "d.168", "d.198", "d.229",     
-                    "d.259", "d.290", "d.320"), check.names=TRUE)
-
+frostUplandAll <-read.csv(frostUplandInfile, header=F, skip=1, sep=",",
+                       col.names=c("Watershed", "SnowcourseID", "Date", "Point", "FrostDEPTH"),
+                       check.names=TRUE)
                
-unlink(seasmInfile)
-tmp1DATE<-as.Date(seasm_raw$DATE,format="%Y-%m-%d")
+unlink(frostUplandInfile)
+		    
+# attempting to convert dt2$Date dateTime string to R date structure (date or POSIXct)   
+tmp2Date<-as.Date(frostUplandAll$Date, format = "%Y-%m-%d")
 # Keep the new dates only if they all converted correctly
-if(nrow(seasm_raw[seasm_raw$DATE != "",]) == length(tmp1DATE[!is.na(tmp1DATE)])){seasm_raw$DATE <- tmp1DATE } else {print("Date conversion failed for dt1$DATE. Please inspect the data and do the date conversion yourself.")}
+if(nrow(frostUplandAll[frostUplandAll$Date != "",]) == length(tmp2Date[!is.na(tmp2Date)])){frostUplandAll$Date <- tmp2Date } else {print("Date conversion failed for dt2$Date. Please inspect the data and do the date conversion yourself.")}   
 
-# Select just the S2 watershed
-seasm_raw = seasm_raw %>%
-  filter(LOCATION %in% c('S2E', 'S2W','S2S'))
+#Filter only S2
+frostUpland = frostUplandAll %>% 
+  filter(frostUplandAll$SnowcourseID %in% c('S21', 'S22', 'S23'))
+  
+
+#Bog Frost Depths
+frostBogURL  <- "https://pasta.lternet.edu/package/data/eml/edi/572/1/fbbdd3f237bbde445450d897172ba556" 
+frostBogInfile <- tempfile()
+try(download.file(frostBogURL, frostBogInfile, method="curl"))
+if (is.na(file.size(frostBogInfile))) download.file(frostBogURL, frostBogInfile,method="auto")
+
+frostBog <-read.csv(frostBogInfile, header=F, skip=1, sep=",", 
+                    col.names=c("peatland", "year", "frostDate", "depthToFrost", "frostThickness", "frostPercent"), 
+                    check.names=TRUE)
+               
+unlink(frostBogInfile)
+		    
+# Fix any interval or ratio columns mistakenly read in as nominal and nominal columns read as numeric or dates read as strings
+if (class(frostBog$peatland)!="factor") frostBog$peatland<- as.factor(frostBog$peatland)                                   
+# attempting to convert dt1$frostDate dateTime string to R date structure (date or POSIXct)                                
+tmp1frostDate<-as.Date(frostBog$frostDate, format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(frostBog[frostBog$frostDate != "",]) == length(tmp1frostDate[!is.na(tmp1frostDate)])){frostBog$frostDate <- tmp1frostDate } else {print("Date conversion failed for dt1$frostDate. Please inspect the data and do the date conversion yourself.")}  
+
+#Filter only S2
+frostBog = frostBog %>%
+  filter(peatland == 'S2')
 ```
 
 ```{r}
-#Aggregate to monthly 
-precip_monthly = data.frame(precip) %>%
-  mutate(month = month(DATE)) %>%
-  mutate(year = year(DATE)) %>%
-  group_by(month, year) %>%
-  summarise(South_PCP = sum(South_PCP))
-
-stream_monthly = data.frame(stream) %>%
-  mutate(year = year(DateTime)) %>%
-  mutate(month = month(DateTime)) %>%
-  group_by(month, year) %>%
-  summarise(qInterval = mean(q.interval, na.rm = TRUE)/10)
-
-bog_monthly = data.frame(bog) %>%
-  mutate(year = year(DATE)) %>%
-  mutate(month = month(DATE)) %>%
-  group_by(month, year) %>%
-  summarise(WTE = mean(WTE))
-
-snow_monthly = data.frame(snow) %>%
+#Manipulate to add snow years and the precip, snow allocations 
+#Add years
+frostUpland = frostUpland %>%
   mutate(year = year(Date)) %>%
-  mutate(month = month(Date)) %>%
-  group_by(month, year) %>%
-  summarise(Snow_in = sum(Snow..inches., na.rm = TRUE))
+  merge(snowAnnual[c('year', 'typeS')], on = 'year') %>% #Annual Snow Accumulation
+  merge(annualPrecip[c('year', 'typeP')], on = 'year') %>% #Annual Precip 
+  merge(winterPrecip[c('year', 'typeP_snow')], on = 'year') %>% #Snow Season Precipitation
+  merge(meltPrecip[c('year', 'typeP_melt')], on = 'year') %>% #Melt Season Precipitation
+  merge(growingPrecip[c('year', 'typeP_growing')], on = 'year') %>% #Growing Season Precipitation
+  merge(winterTemp[c('year', 'typeT_snow')], on = 'year') %>% #Snow Season Temperature
+  merge(meltTemp[c('year', 'typeT_melt')], on = 'year') %>% #Melt Season Temperature
+  merge(growingTemp[c('year', 'typeT_growing')], on = 'year') #Growing Season Temperature
 
-seasm_monthly = seasm_raw %>%
-  mutate(month = month(DATE)) %>%
-  mutate(year = year(DATE)) %>%
-  group_by(month, year, LOCATION) %>%
-  summarise_at(vars(d.15:d.320), mean, na.rm = TRUE) %>%
-  select(c(month, year, LOCATION, d.15, d.76, d.137)) %>%
-  pivot_wider(names_from = LOCATION, values_from = c(d.15, d.76, d.137), id_cols = c(month, year))
-
-#merge into dataset
-dat_monthly = merge(x = precip_monthly, stream_monthly, by = c('month', 'year'), how = 'outer', all = TRUE)
-dat_monthly = merge(dat_monthly, bog_monthly, by = c('month', 'year'), how = 'outer', all = TRUE)
-dat_monthly = merge(dat_monthly, snow_monthly, by = c('month', 'year'), how = 'outer', all = TRUE)
-dat_monthly = merge(dat_monthly, seasm_monthly, by = c('month', 'year'), how = 'outer', all = TRUE) %>% 
-  arrange(year, month) 
-
-#Cut off before 1968
-dat_monthly = dat_monthly %>%
-  filter(year > 1967)
-
-#Nearest neighbor fill nans in soil moisture
-dat_monthly = data.frame(na.fill(dat_monthly, "extend"))
+frostUpland
 ```
 
 ```{r}
-vars = c("South_PCP", "WTE", "Snow_in", "d.15_S2E", "d.15_S2S", "d.76_S2E", "d.76_S2S", "d.137_S2E", "d.137_S2S")
-
-buff = 0.2
-
-#Time series based plots
-#Transfer Entropy, i.e. Conditional Mutual Information
-for(lag in seq(1, 6)){
-  monthly_MI_data = data.frame(matrix(ncol = 0, nrow = 12))
-  monthly_R_data = data.frame(matrix(ncol = 0, nrow = 12))
+plotFrost = function(x, y, xlab, ylab){
+  par(mfrow = c(2, 2), 
+          mar = c(4, 4, 4, 4))
   
-  for(v in vars){
-    monthly_MI_data[v] = calc_monthlyQ_contribution_Conditional(v, lag, dat_monthly)
-    monthly_R_data[v] = calc_monthlyQ_correlations(v, lag, dat_monthly)
+  #High X, High Y
+  dat1 = frostUpland %>%
+    filter((year %in% frostUpland$year[frostUpland[,x] == 'High']) &
+             (year %in% frostUpland$year[frostUpland[,y] == 'High']))
+  if(nrow(dat1) > 0){
+    boxplot(dat1$FrostDEPTH ~ dat1$SnowcourseID, ylab = 'Frost Depth (cm)',
+          ylim = c(0, max(frostUpland$FrostDEPTH)), 
+          xlab = '')
+    title(paste0('High ', xlab, ', High ', ylab))
   }
   
-  #Plot stacked time series (plus shifted data)
-  x  = seq(1:12)
-  months = c(x[(length(x)-lag+1):length(x)], x[1:(length(x)-lag)])
-  monthly_MI_data = monthly_MI_data %>% 
-    mutate(month = months) %>%
-    gather(variable, value, vars)
+  #High X, Low Y
+  dat2 = frostUpland %>%
+    filter((year %in% frostUpland$year[frostUpland[,x] == 'High']) &
+             (year %in% frostUpland$year[frostUpland[,y] == 'Low']))
+  if(nrow(dat2) > 0){
+    boxplot(dat2$FrostDEPTH ~ dat2$SnowcourseID, ylab = 'Frost Depth (cm)', 
+          ylim = c(0, max(frostUpland$FrostDEPTH)), 
+          xlab = '')
+    title(paste0('High ', xlab, ', Low ', ylab))
+  }
   
-  monthlyplot = ggplot(data = monthly_MI_data, aes(x = month, y = value, fill = variable)) +
-    #Plot
-    geom_area() +
-    scale_fill_brewer(palette = "BrBG") + 
-    ylim(0, 1) + 
-    xlab(' ') + 
-    ylab('Conditional Mutual Information') +
-    theme(legend.position = 'bottom',
-          panel.background = element_blank()) + 
-    scale_x_continuous(n.breaks=12) 
-
-  monthly_R_data = monthly_R_data %>% 
-    mutate(month = months) %>%
-    gather(variable, value, vars)
+  #Low X, High Y
+  dat3 = frostUpland %>%
+    filter((year %in% frostUpland$year[frostUpland[,x] == 'Low']) &
+             (year %in% frostUpland$year[frostUpland[,y] == 'High']))
+  if(nrow(dat3) > 0){
+    boxplot(dat3$FrostDEPTH ~ dat3$SnowcourseID, ylab = 'Frost Depth (cm)', 
+          ylim = c(0, max(frostUpland$FrostDEPTH)), 
+          xlab = '')
+    title(paste0('Low ', xlab, ', High ', ylab))
+  }
   
-  monthlyplot_corr = ggplot(data = monthly_R_data, aes(x = month, y = value, col = variable)) +
-    geom_line() +
-    geom_point() + 
-    scale_color_brewer(palette = "BrBG") + 
-    ylim(-1, 1) + 
-    xlab(' ') + 
-    ylab('Pearson R') +
-    ggtitle(paste0('Streamflow Contributions at lag ', lag)) +
-    theme(legend.position = 'none',
-          panel.background = element_blank()) +
-    scale_x_continuous(n.breaks = 12)
-
-  fullplot = plot_grid(monthlyplot_corr, monthlyplot, 
-            ncol = 1,
-            axis = 'l',
-            align = 'v',
-            rel_heights = c(2,3))
-
-  print(fullplot)
-  
+  #Low X, Low Y
+  dat4 = frostUpland %>%
+    filter((year %in% frostUpland$year[frostUpland[,x] == 'Low']) &
+             (year %in% frostUpland$year[frostUpland[,y] == 'Low']))
+  if(nrow(dat4) > 0){
+    boxplot(dat4$FrostDEPTH ~ dat4$SnowcourseID, ylab = 'Frost Depth (cm)', 
+          ylim = c(0, max(frostUpland$FrostDEPTH)), 
+          xlab = '')
+    title(paste0('Low ', xlab, ', Low ', ylab))
+  }
 }
+
 ```
 
 ```{r}
-#Variable based plots
-#Transfer Entropy, i.e. Conditional Mutual Information
-for(v in vars){
-  monthly_MI_var_data = data.frame(matrix(ncol = 0, nrow = 12))
-  monthly_R_var_data = data.frame(matrix(ncol = 0, nrow = 12))
-  
-  for(lag in seq(1, 6)){
-    temp = calc_monthlyQ_contribution_Conditional(v, lag, dat_monthly)
-    temp_corr = calc_monthlyQ_correlations(v, lag, dat_monthly)
-    #time shift the MI values
-    monthly_MI_var_data[lag] = c(temp[(length(temp)-lag+1):length(temp)], temp[1:(length(temp)-lag)])
-    monthly_R_var_data[lag] = c(temp_corr[(length(temp_corr)-lag+1):length(temp_corr)], temp_corr[1:(length(temp_corr)-lag)])
-  }
-  
-  #Plot stacked time series (plus shifted data)
-  x  = seq(1:12)
-  monthly_MI_var_data = monthly_MI_var_data %>% 
-    mutate(month = x) %>%
-    melt(id.vars = c('month'))
-  
- monthlyplot_stacked = ggplot(data = monthly_MI_var_data, aes(x = month, y = value, fill = variable)) +
-    geom_area() +
-    scale_fill_brewer(palette = "PuBuGn") + 
-    xlim(1,12) +
-    ylim(0, 1) + 
-    xlab(' ') + 
-    ylab('Conditional Mutual Information') +
-    theme(legend.position = 'bottom',
-          panel.background = element_blank()) +
-    scale_x_continuous(n.breaks = 12)
-   
-  
-  monthly_R_var_data = monthly_R_var_data %>% 
-    mutate(month = x) %>%
-    melt(id.vars = c('month'))
-  
-  monthlyplot_corr = ggplot(data = monthly_R_var_data, aes(x = month, y = value, col = variable)) +
-    geom_line() +
-    geom_point() + 
-    scale_color_brewer(palette = "PuBuGn") + 
-    xlim(1,12) +
-    ylim(-1, 1) + 
-    xlab(' ') + 
-    ylab('Pearson R') +
-    ggtitle(paste0('Lagged Streamflow Contributions from ', v)) +
-    theme(legend.position = 'none',
-          panel.background = element_blank()) + 
-    scale_x_continuous(n.breaks = 12)
-  
-  fullplot = plot_grid(monthlyplot_corr, monthlyplot_stacked, 
-            ncol = 1,
-            axis = 'l',
-            align = 'v',
-            rel_heights = c(2,3))
-
-  print(fullplot)
-    
-}
+x = 'typeP'
+y = 'typeP'
+xlab = 'Annual Precip'
+ylab = 'Annual Precip'
+plotFrost(x, y, xlab, ylab)
 ```
+
+
+
+
+
+
+
+
+
 
 
