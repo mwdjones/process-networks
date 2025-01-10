@@ -766,10 +766,10 @@ plotMI_modified(data_seasonal, 'Low Temp, Low Snow', unique(lowSlowT_seasonal$ye
 ```{r}
 #Version with snowfall and precipitation on annual basis
 
-print("High Precip - Low Snow")
+print("High Precip - High Snow")
 print("-----------------------------")
 ## High Precip, High Snow Years
-plotMI_modified(data_seasonal,'High Precip, Low Snow', unique(lowShighP_seasonal$year))
+plotMI_modified(data_seasonal,'High Precip, High Snow', unique(highShighP_seasonal$year))
 
 print("High Precip - Low Snow")
 print("-----------------------------")
@@ -781,7 +781,7 @@ print("Low Precip - High Snow")
 print("-----------------------------")
 #Not enough data points
 ## Low Precip, High Snow
-#plotMI_modified(data_seasonal, 'Low Precip, High Snow', unique(highSlowP_seasonal$year))
+plotMI_modified(data_seasonal, 'Low Precip, High Snow', unique(highSlowP_seasonal$year))
 
 
 print("Low Precip - Low Snow")
@@ -914,9 +914,9 @@ plotFrost = function(x, y, xlab, ylab){
 
 ```{r}
 x = 'typeP'
-y = 'typeP'
+y = 'typeS'
 xlab = 'Annual Precip'
-ylab = 'Annual Precip'
+ylab = 'Annual Snowfall'
 plotFrost(x, y, xlab, ylab)
 ```
 
