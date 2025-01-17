@@ -32,6 +32,7 @@ library(stringr)
 library(latex2exp)
 library(Hmisc)
 library(plotly)
+library(multcompView)
 ```
 
 # Data Import
@@ -407,6 +408,15 @@ highSlowP_seasonal = data_seasonal %>%
 lowSlowP_seasonal = data_seasonal %>%
   filter((year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low']) &
            (year %in% annualPrecip$year[annualPrecip$typeP == 'Low']))
+
+#Add general labels to data_seasonal
+data_seasonal = data_seasonal %>%
+  mutate(yearCat = ifelse(year %in% highShighP_seasonal$year, 'highShighP', 
+           ifelse(year %in% lowShighP_seasonal$year, 'lowShighP', 
+           ifelse(year %in% highSlowP_seasonal$year, 'highSlowP', 'lowSlowP')))) %>%
+  mutate(season = factor(season, levels = c('Melt','Growing', 'Snow'),ordered = TRUE))
+
+head(data_seasonal)
 ```
 
 
@@ -791,6 +801,68 @@ plotMI_modified(data_seasonal, 'Low Precip, Low Snow', unique(lowSlowP_seasonal$
 ```
 
 But, how do we determine which of these confouding climatological or hydrological variables are the most influential in determining time-lagged hydrological connectivity? There are a variety of options that all influence snow accumulation and melt and soil frost dynamics: Annual Precipitation, Snow Accumulation, Winter Temperature, Spring Temperature, Annual Temperature, Fall Precipitation, etc. If we think that this connectivity is driven predominantly by soil frost depth and timing, then we need to look at which of these variables end up with the most distict frost scenarios. 
+
+```{r}
+generate_label_df <- function(TUKEY, variable){
+ 
+     # Extract labels and factor levels from Tukey post-hoc 
+     Tukey.levels <- TUKEY[[variable]][,4]
+     Tukey.labels <- data.frame(multcompLetters(Tukey.levels)['Letters'])
+     
+     #I need to put the labels in the same order as in the boxplot :
+     Tukey.labels$treatment=rownames(Tukey.labels)
+     Tukey.labels=Tukey.labels[order(Tukey.labels$treatment) , ]
+     return(Tukey.labels)
+}
+
+plotQuadratVar = function(var, ylabel, tukey = TRUE){
+  quadPlot = ggplot(data = data_seasonal, aes(x = data_seasonal$season, y = data_seasonal[[var]])) +
+    geom_boxplot() + 
+    facet_wrap(vars(yearCat)) +
+    xlab('Season') +
+    ylab(ylabel) + 
+    theme_bw() + 
+    theme(strip.text = element_text(face = "bold", hjust = 0),
+    strip.background = element_blank())
+    
+  if(tukey){
+      model = lm(unlist(data_seasonal[var]) ~ data_seasonal$season*data_seasonal$yearCat)
+      ANOVA=aov(model)
+      
+      TUKEY <- TukeyHSD(x=ANOVA, conf.level=0.95, ordered = FALSE)
+      
+      #get labels
+      letters = generate_label_df(TUKEY, "data_seasonal$season:data_seasonal$yearCat")
+      names(letters)<-c('Letters','Treatment')
+      #set locations
+      yvalue<-aggregate(.~season*yearCat, data=data_seasonal, max) %>%
+        mutate(Treatment = paste0(season, ":", yearCat))
+      print(yvalue)
+      final <- merge(letters,yvalue) #merge dataframes
+
+      par(mfrow = c(1, 3), 
+          mar = c(4, 4, 4, 4))
+      plot(TUKEY, las = 1, col="brown")
+      
+      #add labels to plot
+      quadPlot = quadPlot + 
+        geom_text(data = final, aes(x = season, y = max(final[var]), label = Letters, 
+                                    hjust = -0.5, vjust = 0.75)) 
+  }
+  
+  ggsave(filename = paste0('./Figures/VariablePlots/', var, '.pdf'), quadPlot)
+  print(quadPlot)
+
+  
+}
+```
+
+```{r}
+#'qInterval', 'South_PCP', 'WTE', 'Snow_in', 'MEANC', 'd.15_S2E', 'd.15_S2S', 'd.76_S2E', 'd.76_S2S', 'd.137_S2E', 'd.137_S2S'
+
+plotQuadratVar(var = 'd.137_S2S', ylab = 'Soil Moisture [cm3/cm3]')
+```
+
 
 # Frost Analysis by Hydrology and Climatology Variables
 
