@@ -221,17 +221,20 @@ temp_seasons = temp %>%
 #Find average snow temperatures
 winterTemp = temp_seasons %>%
   filter(season == 'Snow') %>%
-  mutate(typeT_snow = ifelse(MEANC > mean(MEANC), 'High', 'Low'))
+  mutate(typeT_snow = ifelse(MEANC > mean(MEANC), 'High', 'Low')) %>%
+  rename(winterTempC = MEANC)
 
 #Find average growing temperatures 
 growingTemp = temp_seasons %>%
   filter(season == 'Growing') %>%
-  mutate(typeT_growing = ifelse(MEANC > mean(MEANC), 'High', 'Low'))
+  mutate(typeT_growing = ifelse(MEANC > mean(MEANC), 'High', 'Low')) %>%
+  rename(growingTempC = MEANC)
 
 #Find average melt temperatures 
 meltTemp = temp_seasons %>%
   filter(season == 'Melt') %>%
-  mutate(typeT_melt = ifelse(MEANC > mean(MEANC), 'High', 'Low'))
+  mutate(typeT_melt = ifelse(MEANC > mean(MEANC), 'High', 'Low')) %>%
+  rename(meltTempC = MEANC)
 ```
 
 ```{r}
@@ -250,17 +253,20 @@ precip_seasons = precip %>%
 #Find average snow temperatures
 winterPrecip = precip_seasons %>%
   filter(season == 'Snow') %>%
-  mutate(typeP_snow = ifelse(totP > mean(totP), 'High', 'Low'))
+  mutate(typeP_snow = ifelse(totP > mean(totP), 'High', 'Low')) %>%
+  rename(winterTotP = totP)
 
 #Find average growing temperatures 
 growingPrecip = precip_seasons %>%
   filter(season == 'Growing') %>%
-  mutate(typeP_growing = ifelse(totP > mean(totP), 'High', 'Low'))
+  mutate(typeP_growing = ifelse(totP > mean(totP), 'High', 'Low')) %>%
+  rename(growingTotP = totP)
 
 #Find average melt temperatures 
 meltPrecip = precip_seasons %>%
   filter(season == 'Melt') %>%
-  mutate(typeP_melt = ifelse(totP > mean(totP), 'High', 'Low'))
+  mutate(typeP_melt = ifelse(totP > mean(totP), 'High', 'Low')) %>%
+  rename(meltTotPrecip = totP)
 
 #Total annual precipitation
 annualPrecip = precip_seasons %>%
@@ -920,16 +926,28 @@ frostBog = frostBog %>%
 #Add years
 frostUpland = frostUpland %>%
   mutate(year = year(Date)) %>%
-  merge(snowAnnual[c('year', 'typeS')], on = 'year') %>% #Annual Snow Accumulation
-  merge(annualPrecip[c('year', 'typeP')], on = 'year') %>% #Annual Precip 
-  merge(winterPrecip[c('year', 'typeP_snow')], on = 'year') %>% #Snow Season Precipitation
-  merge(meltPrecip[c('year', 'typeP_melt')], on = 'year') %>% #Melt Season Precipitation
-  merge(growingPrecip[c('year', 'typeP_growing')], on = 'year') %>% #Growing Season Precipitation
-  merge(winterTemp[c('year', 'typeT_snow')], on = 'year') %>% #Snow Season Temperature
-  merge(meltTemp[c('year', 'typeT_melt')], on = 'year') %>% #Melt Season Temperature
-  merge(growingTemp[c('year', 'typeT_growing')], on = 'year') #Growing Season Temperature
+  merge(snowAnnual[c('year', 'typeS', 'totSnow')], on = 'year') %>% #Annual Snow Accumulation
+  merge(annualPrecip[c('year', 'typeP', 'totP')], on = 'year') %>% #Annual Precip 
+  merge(winterPrecip[c('year', 'typeP_snow', 'winterTotP')], on = 'year') %>% #Snow Season Precipitation
+  merge(meltPrecip[c('year', 'typeP_melt', 'meltTotPrecip')], on = 'year') %>% #Melt Season Precipitation
+  merge(growingPrecip[c('year', 'typeP_growing', 'growingTotP')], on = 'year') %>% #Growing Season Precipitation
+  merge(winterTemp[c('year', 'typeT_snow', 'winterTempC')], on = 'year') %>% #Snow Season Temperature
+  merge(meltTemp[c('year', 'typeT_melt', 'meltTempC')], on = 'year') %>% #Melt Season Temperature
+  merge(growingTemp[c('year', 'typeT_growing', 'growingTempC')], on = 'year') %>% #Growing Season Temperature
+  mutate(snowRatio = totSnow/totP)
 
 frostUpland
+```
+
+```{r}
+ggplot(data = frostUpland, aes(x = totSnow, y = winterTempC, col = FrostDEPTH, size = FrostDEPTH)) +
+  geom_jitter(height = 0.5, width = 2) +
+  geom_rug() +
+  xlab('Total Annual Snowfall (in)') +
+  ylab('Average Winter Temperature (C)') +
+  theme_bw()
+
+ggsave(filename = paste0('./Figures/VariablePlots/totSnow_winterTempC_FrostDepths.pdf'), height = 5 , width = 6)
 ```
 
 ```{r}
