@@ -333,6 +333,7 @@ dat = merge(dat, seasm_melt, by = c('season', 'year'), how = 'inner') %>%
 ```
 
 ```{r}
+write.csv(dat, './mef-data/data_compiled_gapfilled_seasonal.csv', row.names = FALSE)
 dat
 ```
 
