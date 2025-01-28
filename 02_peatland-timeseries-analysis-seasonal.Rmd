@@ -562,6 +562,7 @@ ggplot(data = data_monthly_nogaps) +
         aspect.ratio = 0.3, 
         panel.background = element_blank())
 ```
+
 One final piece of pre-analysis - taking the 5 month anomaly values. This more clearly translates any results that may be minimized or exacerbated by seasonal trends. 
 
 ```{r}
