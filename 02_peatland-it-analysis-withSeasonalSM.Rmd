@@ -860,7 +860,7 @@ plotQuadratVar = function(var, ylabel, tukey = TRUE){
 ```{r}
 #'qInterval', 'South_PCP', 'WTE', 'Snow_in', 'MEANC', 'd.15_S2E', 'd.15_S2S', 'd.76_S2E', 'd.76_S2S', 'd.137_S2E', 'd.137_S2S'
 
-plotQuadratVar(var = 'd.137_S2S', ylab = 'Soil Moisture [cm3/cm3]')
+plotQuadratVar(var = 'WTE', ylab = 'Water Table Elevation [m]')
 ```
 
 
