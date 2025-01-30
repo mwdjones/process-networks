@@ -639,15 +639,17 @@ plotMI_modified = function(data, title, years = NULL){
          mutate(season_source = factor(x, levels = c("Snow", "Melt", "Growing"))) %>%
          mutate(season_target = factor(seasons, levels = c("Snow", "Melt", "Growing"))) %>%
          gather(variable, value, vars)
+      print(seasonal_MI_data)
       
       seasonal_R_data = seasonal_R_data %>% 
          mutate(season_source = factor(x, levels = c("Snow", "Melt", "Growing"))) %>%
          mutate(season_target = factor(seasons, levels = c("Snow", "Melt", "Growing"))) %>%
          gather(variable, value, vars)
+      print(seasonal_R_data)
       
       #Change value sign based on R2 value
-      seasonal_MI_data = seasonal_MI_data %>%
-        mutate(value = ifelse(seasonal_R_data$value < 0, -value, value))
+      #seasonal_MI_data = seasonal_MI_data %>%
+      #  mutate(value = ifelse(seasonal_R_data$value < 0, -value, value))
       
       #1 - streamflow, 2 - frost, 3 - melt
       monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season_target, y = value, fill = variable)) +
