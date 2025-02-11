@@ -367,6 +367,17 @@ summary(data_seasonal)
 ```
 
 ```{r}
+#Average out the south and east soil moisture
+data_seasonal['d.15'] = (data_seasonal['d.15_S2S'] + data_seasonal['d.15_S2E'])/2
+data_seasonal['d.76'] = (data_seasonal['d.76_S2S'] + data_seasonal['d.76_S2E'])/2
+data_seasonal['d.137'] = (data_seasonal['d.137_S2S'] + data_seasonal['d.137_S2E'])/2
+
+data_seasonal = data_seasonal %>%
+  select(-contains(c("S2S", "S2E")))
+```
+
+
+```{r}
 #Sort into high and low snow year data frames (based on calendar year, not snow year)
 #Snow only
 highSnow_seasonal = data_seasonal %>%
@@ -535,7 +546,7 @@ calc_seasonalQ_correlations = function(var, lag, data, subset = FALSE, listYears
 
 ```{r}
 #PLOTTING FUNCTIONS
-vars = c("South_PCP", "WTE", "MEANC", "Snow_in", "d.15_S2E", "d.15_S2S", "d.76_S2E", "d.76_S2S", "d.137_S2E", "d.137_S2S")
+vars = c( "d.15", "d.76", "d.137", "MEANC",  "South_PCP", "Snow_in", "WTE")
 
 buff = 0.2
 
@@ -652,7 +663,7 @@ plotMI_modified = function(data, title, years = NULL){
       #  mutate(value = ifelse(seasonal_R_data$value < 0, -value, value))
       
       #1 - streamflow, 2 - frost, 3 - melt
-      monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season_target, y = value, fill = variable)) +
+      monthlyplot = ggplot(data = seasonal_MI_data, aes(x = season_target, y = value, fill = factor(variable, levels = vars))) +
         #Plot
         geom_col(position = 'dodge') +
         scale_fill_brewer(palette = "BrBG") + 
