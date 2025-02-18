@@ -953,6 +953,20 @@ frostUpland = frostUpland %>%
 frostUpland
 ```
 
+
+```{r}
+#Annual averages
+frostUpland_annual = frostUpland %>%
+  group_by(year) %>%
+  summarise(meanUpFrostDepth = mean(FrostDEPTH, na.rm = TRUE)) %>%
+  mutate(typeFrost = ifelse(meanUpFrostDepth > mean(meanUpFrostDepth), 'High', 'Low'))
+
+frostBog_annual = frostBog %>%
+  group_by(year) %>%
+  summarise(meanBogFrostDepth = mean(frostThickness, na.rm = TRUE)) %>%
+  mutate(typeFrost = ifelse(meanBogFrostDepth > mean(meanBogFrostDepth), 'High', 'Low'))
+```
+
 ```{r}
 ggplot(data = frostUpland, aes(x = totSnow, y = winterTempC, col = FrostDEPTH, size = FrostDEPTH)) +
   geom_jitter(height = 0.5, width = 2) +
