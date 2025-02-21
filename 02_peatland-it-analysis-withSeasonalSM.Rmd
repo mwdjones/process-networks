@@ -656,7 +656,6 @@ plotMI_modified = function(data, title, years = NULL){
          mutate(season_source = factor(x, levels = c("Snow", "Melt", "Growing"))) %>%
          mutate(season_target = factor(seasons, levels = c("Snow", "Melt", "Growing"))) %>%
          gather(variable, value, vars)
-      print(seasonal_R_data)
       
       #Change value sign based on R2 value
       #seasonal_MI_data = seasonal_MI_data %>%
@@ -938,7 +937,7 @@ frostBog = frostBog %>%
 ```{r}
 #Manipulate to add snow years and the precip, snow allocations 
 #Add years
-frostUpland = frostUpland %>%
+frostUpland_merged = frostUpland %>%
   mutate(year = year(Date)) %>%
   merge(snowAnnual[c('year', 'typeS', 'totSnow')], on = 'year') %>% #Annual Snow Accumulation
   merge(annualPrecip[c('year', 'typeP', 'totP')], on = 'year') %>% #Annual Precip 
@@ -950,13 +949,14 @@ frostUpland = frostUpland %>%
   merge(growingTemp[c('year', 'typeT_growing', 'growingTempC')], on = 'year') %>% #Growing Season Temperature
   mutate(snowRatio = totSnow/totP)
 
-frostUpland
+frostUpland_merged
 ```
 
 
 ```{r}
 #Annual averages
 frostUpland_annual = frostUpland %>%
+  mutate(year = year(Date)) %>%
   group_by(year) %>%
   summarise(meanUpFrostDepth = mean(FrostDEPTH, na.rm = TRUE)) %>%
   mutate(typeFrost = ifelse(meanUpFrostDepth > mean(meanUpFrostDepth), 'High', 'Low'))
@@ -1038,9 +1038,32 @@ ylab = 'Annual Snowfall'
 plotFrost(x, y, xlab, ylab)
 ```
 
+# IT analysis using measured frost breakdown
+
+```{r}
+breaks = quantile(frostUpland_annual$meanUpFrostDepth, probs = c(0, 1/3, 2/3, 1.0))
+frostUpland_annual['frostQuantMeas'] = cut(frostUpland_annual$meanUpFrostDepth, breaks = breaks,
+                                        include.lowest = TRUE,
+                                        labels = c('Low', 'Med', 'High'))
+head(frostUpland_annual)
+```
+
+```{r}
+#Rerun IT with these designations
+print("High Frost")
+print("-----------------------------")
+plotMI_modified(data_seasonal,'High Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'High'])
 
 
+print("Med Frost")
+print("-----------------------------")
+plotMI_modified(data_seasonal, 'Med Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Med'])
 
+
+print("Low Frost")
+print("-----------------------------")
+plotMI_modified(data_seasonal, 'Low Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Low'])
+```
 
 
 
