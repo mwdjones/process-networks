@@ -89,21 +89,9 @@ if (class(precip$South_Flag)!="factor") precip$South_Flag<- as.factor(precip$Sou
 precip$South_PCP <- ifelse((trimws(as.character(precip$South_PCP))==trimws("NA")),NA,precip$South_PCP)         
 
 # Streamflow
-streamURL  <- "https://pasta.lternet.edu/package/data/eml/edi/573/1/2aca4b900546e80ed7dd409ff1ad9787" 
-streamInfile <- tempfile()
-try(download.file(streamURL,streamInfile,method="curl"))
-if (is.na(file.size(streamInfile))) download.file(streamURL,streamInfile,method="auto")
-
-stream <-read.csv(streamInfile, header=F, skip=1, sep=",",
-                  col.names=c("Peatland", "DateTime", "Stage.ft", "Q.cfs", "q.mmh", "q.interval"),
-                  check.names=TRUE)
-               
-unlink(streamInfile)
-if (class(stream$Peatland)!="factor") stream$Peatland<- as.factor(stream$Peatland)                       
-tmp1DateTime<-as.POSIXct(stream$DateTime,format="%Y-%m-%d %H:%M:%S")
-# Keep the new dates only if they all converted correctly
-if(nrow(stream[stream$DateTime != "",]) == length(tmp1DateTime[!is.na(tmp1DateTime)])){stream$DateTime <- tmp1DateTime } else {print("Date conversion failed for stream$DateTime. Please inspect the data and do the date conversion yourself.")} 
-
+stream <-read.csv('./mef-data/Streamflow_daily.csv', header=T, sep=",")
+stream = stream %>%
+  filter(Watershed == 'S2')
 
 # Bog well WTE
 bogURL  <- "https://pasta.lternet.edu/package/data/eml/edi/562/3/671f15337a677da71852de506a8d9b05" 
@@ -292,12 +280,12 @@ precip_seasonal = data.frame(precip) %>%
   rename('year' = 'snowYear')
 
 stream_seasonal = data.frame(stream) %>%
-  mutate(year = year(DateTime)) %>%
-  mutate(snowYear = ifelse(month(DateTime) < 10, year(DateTime), year(DateTime) + 1)) %>%
+  mutate(year = year(Date)) %>%
+  mutate(snowYear = ifelse(month(Date) < 10, year(Date), year(Date) + 1)) %>%
   merge(snow_bounds, by = 'year') %>%
-  mutate(season = ifelse(yday(DateTime) > lastNZ & yday(DateTime) < 183, 'Melt', ifelse(yday(DateTime) > 182 & yday(DateTime) < 275, 'Growing', 'Snow'))) %>%
+  mutate(season = ifelse(yday(Date) > lastNZ & yday(Date) < 183, 'Melt', ifelse(yday(Date) > 182 & yday(Date) < 275, 'Growing', 'Snow'))) %>%
   group_by(season, snowYear) %>%
-  summarise(qInterval = mean(q.interval, na.rm = TRUE)/10) %>%
+  summarise(mean_cmDay = mean(Flow..cm.day., na.rm = TRUE)/10) %>%
   rename('year' = 'snowYear')
 
 bog_seasonal = data.frame(bog) %>%
@@ -357,7 +345,7 @@ Transfer entropy is now calculated as lagged mutual information by taking a vari
 ```{r}
 data_seasonal = dat %>%
   drop_na() %>%
-  relocate(c("qInterval", "year", "season")) %>%
+  relocate(c("mean_cmDay", "year", "season")) %>%
   #Order seasons so they show up in "Snow", "Melt", "Streamflow" order
   mutate(season = factor(season, levels = c('Growing', 'Melt', 'Snow')))  %>% 
   group_by(year) %>% 
@@ -460,11 +448,11 @@ calc_seasonalQ_contribution_Conditional = function(var, lag, data, subset = FALS
     data = data[order(data$year, data$season),]
     
     #Lag timeseries
-    lagDat = lagTS(data[, var], data$qInterval, lag)
+    lagDat = lagTS(data[, var], data$mean_cmDay, lag)
     
     if(lag > 0){
       #Lag autocorrelation
-      lagY = lagTS(data$qInterval, data$qInterval, lag-1)
+      lagY = lagTS(data$mean_cmDay, data$mean_cmDay, lag-1)
           
       #Attach monthly values
       lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)],
@@ -473,7 +461,7 @@ calc_seasonalQ_contribution_Conditional = function(var, lag, data, subset = FALS
     }
     else if(lag == 0){
       #lag autocorrelation
-      lagY = lagTS(data$qInterval, data$qInterval, 1)
+      lagY = lagTS(data$mean_cmDay, data$mean_cmDay, 1)
       
       #Attach monthly values
       lagDat = cbind(lagDat[2:length(lagDat$shiftedY),],
@@ -516,7 +504,7 @@ calc_seasonalQ_correlations = function(var, lag, data, subset = FALSE, listYears
   #print(paste0("Variable: ", var, " Lag: ", lag))
   #print("-----")
   #Lag timeseries
-  lagDat = lagTS(data[, var], data$qInterval, lag)
+  lagDat = lagTS(data[, var], data$mean_cmDay, lag)
   
   #Attach monthly values
   lagDat = cbind(lagDat, season = data$season[0:(length(data$season)-lag)], 
@@ -612,7 +600,7 @@ plotMI_original = function(data){
   }
 }
 
-plotMI_modified = function(data, title, years = NULL){
+plotMI_modified = function(data, title, years = NULL, label = NULL){
   
     #set factor levels
     data = data %>%
@@ -651,6 +639,7 @@ plotMI_modified = function(data, title, years = NULL){
          mutate(season_target = factor(seasons, levels = c("Snow", "Melt", "Growing"))) %>%
          gather(variable, value, vars)
       print(seasonal_MI_data)
+      write.csv(seasonal_MI_data, paste0('./MI data/seasonal_mi_data_', label, '_lag', lag, '.csv'))
       
       seasonal_R_data = seasonal_R_data %>% 
          mutate(season_source = factor(x, levels = c("Snow", "Melt", "Growing"))) %>%
@@ -666,9 +655,9 @@ plotMI_modified = function(data, title, years = NULL){
         #Plot
         geom_col(position = 'dodge') +
         scale_fill_brewer(palette = "BrBG") + 
-        ylim(-1, 1) + 
         xlab(' ') + 
         ylab('Conditional Mutual Information') +
+        ylim(0, 1) + 
         theme(legend.position = 'bottom',
               panel.background = element_blank()) +
         ggtitle(paste0(title, ', Lag ', lag))
@@ -1052,17 +1041,17 @@ head(frostUpland_annual)
 #Rerun IT with these designations
 print("High Frost")
 print("-----------------------------")
-plotMI_modified(data_seasonal,'High Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'High'])
+plotMI_modified(data_seasonal,'High Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'High'], label = 'highfrost')
 
 
 print("Med Frost")
 print("-----------------------------")
-plotMI_modified(data_seasonal, 'Med Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Med'])
+plotMI_modified(data_seasonal, 'Med Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Med'], label = 'medfrost')
 
 
 print("Low Frost")
 print("-----------------------------")
-plotMI_modified(data_seasonal, 'Low Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Low'])
+plotMI_modified(data_seasonal, 'Low Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Low'], label = 'lowfrost')
 ```
 
 
