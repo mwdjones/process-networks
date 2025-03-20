@@ -1,0 +1,339 @@
+---
+title: "Transfer Entrop Flow Analysis"
+author: "Mariel Jones"
+date: "2024-08-02"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+fig_save = "./Figures/"
+load_path = "./mef-data/"
+```
+
+```{r}
+library(astsa)
+library(dplyr)
+library(xts)
+library(lubridate)
+library(RTransferEntropy)
+library(tidyr)
+library(ggplot2)
+library(gridExtra)
+library(forecastML)
+library(cowplot)
+library(reshape2)
+library(zoo)
+library(infotheo)
+library(stringr)
+library(latex2exp)
+library(Hmisc)
+library(plotly)
+library(multcompView)
+```
+
+# Data Import
+
+Including: 10 minute soil moisture, seasonal soil moisture, precipitation, streamflow, bog well WTE, temperature, and snow depth from GR
+
+```{r}
+#Import Soil Moisture and PDSI data
+## 10 minute soil moisture
+smURL  <- "https://pasta.lternet.edu/package/data/eml/edi/989/3/e25d4f15276a3158af412758502a59b0" 
+smInfile <- tempfile()
+try(download.file(smURL,smInfile,method="curl"))
+if (is.na(file.size(smInfile))) download.file(smURL,smInfile,method="auto")
+
+sm <-read.csv(smInfile, header=F, skip=1, sep=",", 
+              col.names=c("TIMESTAMP", "S2S_UP_SH", "S2S_UP_DP", "S2S_MI_SH", 
+                          "S2S_MI_DP", "S2S_LO_SH", "S2S_LO_DP", "S2N_UP_SH",     
+                          "S2N_UP_DP", "S2N_MI_SH", "S2N_MI_DP", "S2N_LO_SH",     
+                          "S2N_LO_DP"), check.names=TRUE)
+               
+unlink(smInfile)
+tmp2TIMESTAMP<-as.POSIXct(sm$TIMESTAMP,format="%Y-%m-%d %H:%M:%S")
+# Keep the new dates only if they all converted correctly
+if(nrow(sm[sm$TIMESTAMP != "",]) == length(tmp2TIMESTAMP[!is.na(tmp2TIMESTAMP)])){sm$TIMESTAMP <- tmp2TIMESTAMP } else {print("Date conversion failed for sm$TIMESTAMP. Please inspect the data and do the date conversion yourself.")} 
+#Aggregate to daily
+sm$day <- floor_date(sm$TIMESTAMP, "day")
+sm_daily = data.frame(sm) %>%
+  group_by(day) %>%
+  summarise_all(mean) %>%
+  select(-TIMESTAMP)
+
+
+#Seasonal Soil Moisture (previously processed into plant available water)
+seasm <-read.csv('./mef-data/seasonal/mef_seasonal_soil_moisture_processed.csv', header=T, sep=",")
+         
+# Precipitation
+precipURL  <- "https://pasta.lternet.edu/package/data/eml/edi/563/6/f3a58ff544a4ddd3475d265da61bf40e" 
+precipInfile <- tempfile()
+try(download.file(precipURL,precipInfile,method="curl"))
+if (is.na(file.size(precipInfile))) download.file(precipURL,precipInfile,method="auto")
+
+precip <-read.csv(precipInfile , header=F, skip=1, sep = ",", 
+               col.names=c("DATE", "NADP_PCP", "South_PCP", "North_PCP",     
+                    "NADP_Flag", "South_Flag", "North_Flag") ,check.names=TRUE)
+unlink(precipInfile)
+tmp3DATE<-as.POSIXct(precip$DATE,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(precip[precip$DATE != "",]) == length(tmp3DATE[!is.na(tmp3DATE)])){precip$DATE <- tmp3DATE } else {print("Date conversion failed for precip$TIMESTAMP. Please inspect the data and do the date conversion yourself.")}                                 
+if (class(precip$South_PCP)=="factor") precip$South_PCP <-as.numeric(levels(precip$South_PCP))[as.integer(precip$South_PCP) ]               
+if (class(precip$South_PCP)=="character") precip$South_PCP <-as.numeric(precip$South_PCP)
+if (class(precip$South_Flag)!="factor") precip$South_Flag<- as.factor(precip$South_Flag)
+                
+# Convert Missing Values to NA for non-dates
+precip$South_PCP <- ifelse((trimws(as.character(precip$South_PCP))==trimws("NA")),NA,precip$South_PCP)         
+
+# Streamflow
+stream <-read.csv('./mef-data/daily/Streamflow_daily.csv', header=T, sep=",")
+stream = stream %>%
+  filter(Watershed == 'S2')
+
+# Bog well WTE
+bogURL  <- "https://pasta.lternet.edu/package/data/eml/edi/562/3/671f15337a677da71852de506a8d9b05" 
+bogInfile <- tempfile()
+try(download.file(bogURL,bogInfile,method="curl"))
+if (is.na(file.size(bogInfile))) download.file(bogURL,bogInfile,method="auto")
+
+bog <-read.csv(bogInfile, header=F,skip=1, sep=",",
+               col.names=c("PEATLAND", "DATE", "WTE", "FLAG"), check.names=TRUE)
+               
+unlink(bogInfile)
+if (class(bog$PEATLAND)!="factor") bog$PEATLAND<- as.factor(bog$PEATLAND)                                   
+tmp1DATE<-as.Date(bog$DATE,format="%Y-%m-%d")
+# Keep the new dates only if they all converted correctly
+if(nrow(bog[bog$DATE != "",]) == length(tmp1DATE[!is.na(tmp1DATE)])){bog$DATE <- tmp1DATE } else {print("Date conversion failed for bog$DATE. Please inspect the data and do the date conversion yourself.")}
+if (class(bog$WTE)=="factor") bog$WTE <-as.numeric(levels(bog$WTE))[as.integer(bog$WTE) ]               
+if (class(bog$WTE)=="character") bog$WTE <-as.numeric(bog$WTE)
+if (class(bog$FLAG)!="factor") bog$FLAG<- as.factor(bog$FLAG)
+                
+# Convert Missing Values to NA for non-dates
+bog$WTE <- ifelse((trimws(as.character(bog$WTE))==trimws("NA")),NA,bog$WTE)  
+
+# Select just the S2 watershed
+bog = bog %>%
+  filter(PEATLAND == 'S2')
+
+# import temperature data
+tempURL  <- "https://pasta.lternet.edu/package/data/eml/edi/583/4/982d194dd32adb4419b14e936056c26c" 
+tempInfile <- tempfile()
+try(download.file(tempURL,tempInfile,method="curl"))
+if (is.na(file.size(tempInfile))) download.file(tempURL,tempInfile,method="auto")
+
+temp <-read.csv(tempInfile, header=F, skip=1, sep=",",
+                col.names=c("Date", "STATION", "MAXC",  "MINC",  "FLAG"), check.names=TRUE)
+               
+unlink(tempInfile)
+tmp1Date<-as.Date(temp$Date,format="%Y-%m-%d")  
+
+head(temp)
+
+
+#Snow depths
+snow = read.csv('./mef-data/daily/GR_ForestryLab_snow_daily.csv', 
+                na.strings = c('M', 'T'))
+snow$Date<-as.POSIXct(snow$Date,format="%Y-%m-%d")
+
+```
+
+## Snow Year Aggregation
+
+Summarized the amount of snow that fell between October 1st and September 30th of the following year and allocates a 'high snow' and 'low snow' depending on if the total snowfall input is above or below the 70 year mean. 
+
+```{r}
+#Aggregate to snow year and sum snow inputs
+snowAnnual = snow %>%
+  mutate(snowYear = ifelse(month(Date) < 10, year(Date), year(Date) + 1)) %>%
+  filter(snowYear > 1948) %>%
+  group_by(snowYear) %>%
+  summarise(totSnow = sum(Snow..inches., na.rm=TRUE))
+
+snowAnnual = snowAnnual %>%
+  mutate(typeS = ifelse(totSnow > mean(snowAnnual$totSnow), 'High', 'Low')) %>%
+  mutate(year = snowYear) 
+
+head(snowAnnual)
+```
+
+Finds the first day of the calendar year in the spring (aka water year in the spring) where snow is persistent on the ground and the last day of the water year where snow is persistent on the year and divides them into high and low snow years so that the 'snow season' can be specified based on a dynamic day where snow disapears, not a fixed date. 
+
+```{r}
+#Find first and last non-zero snow and streamflow values
+snow_bounds = snow %>%
+  mutate(year = year(Date)) %>%
+  group_by(year) %>%
+  summarise(firstNZ = yday(Date)[which((Snow.Depth..inches. != 0) & !is.na(Snow.Depth..inches.))[1]],
+            lastNZ = yday(Date)[tail(which((Snow.Depth..inches. != 0) & (month(Date) < 10) & !is.na(Snow.Depth..inches.)))[5]]) 
+
+snow_bounds_high = snow_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$typeS == 'High'])
+snow_bounds_low = snow_bounds %>%
+  filter(year %in% snowAnnual$snowYear[snowAnnual$typeS == 'Low'])
+snow_bounds = rbind(snow_bounds_high, snow_bounds_low)
+
+#stream_bounds = stream %>%
+#  mutate(year = year(DateTime)) %>%
+#  group_by(year) %>%
+  #A threshold is set to eliminate the teeny tiny flows that continue dripping into January
+#  summarise(firstNZ = yday(DateTime)[which((q.interval > 0.01) & !is.na(q.interval))[1]],
+#            lastNZ = yday(DateTime)[tail(which((q.interval > 0.01) & !is.na(q.interval)))[5]]) 
+
+#stream_bounds_high = stream_bounds %>%
+#  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'High'])
+#stream_bounds_low = stream_bounds %>%
+#  filter(year %in% snowAnnual$snowYear[snowAnnual$type == 'Low'])
+```
+
+#Winter Temperature Aggregation
+
+Similar to the snow dynamics, this allocates the seasonality based on the dynamic snow dates listed above and then takes the mean temperature over the designated 'snow' season. 
+
+```{r}
+#Divide seasonal temperatures based on the values in 'snow_bounds'
+temp_seasons = temp %>%
+  filter(STATION == 'South') %>%
+  mutate(MEANC = (MAXC + MINC)/2) %>%
+  mutate(year = year(Date)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(snowYear = ifelse(month(Date) < 10, year(Date), year(Date) + 1)) %>%
+  filter(snowYear > 1948) %>%
+  mutate(season = ifelse(yday(Date) > lastNZ & yday(Date) < 183, 'Melt', ifelse(yday(Date) > 182 & yday(Date) < 275, 'Growing', 'Snow'))) %>%
+  group_by(season, snowYear) %>%
+  summarise(MEANC = mean(MEANC, na.rm = TRUE)) %>%
+  rename('year' = 'snowYear')
+
+#Find average snow temperatures
+winterTemp = temp_seasons %>%
+  filter(season == 'Snow') %>%
+  mutate(typeT_snow = ifelse(MEANC > mean(MEANC), 'High', 'Low')) %>%
+  rename(winterTempC = MEANC)
+
+#Find average growing temperatures 
+growingTemp = temp_seasons %>%
+  filter(season == 'Growing') %>%
+  mutate(typeT_growing = ifelse(MEANC > mean(MEANC), 'High', 'Low')) %>%
+  rename(growingTempC = MEANC)
+
+#Find average melt temperatures 
+meltTemp = temp_seasons %>%
+  filter(season == 'Melt') %>%
+  mutate(typeT_melt = ifelse(MEANC > mean(MEANC), 'High', 'Low')) %>%
+  rename(meltTempC = MEANC)
+```
+
+```{r}
+#Repeat for precipitation
+#Divide seasonal precipitation based on the values in 'snow_bounds'
+precip_seasons = precip %>%
+  mutate(year = year(DATE)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(snowYear = ifelse(month(DATE) < 10, year(DATE), year(DATE) + 1)) %>%
+  filter(snowYear > 1948) %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 275, 'Growing', 'Snow'))) %>%
+  group_by(season, snowYear) %>%
+  summarise(totP = sum(South_PCP, na.rm = TRUE)) %>%
+  rename('year' = 'snowYear')
+
+#Find average snow temperatures
+winterPrecip = precip_seasons %>%
+  filter(season == 'Snow') %>%
+  mutate(typeP_snow = ifelse(totP > mean(totP), 'High', 'Low')) %>%
+  rename(winterTotP = totP)
+
+#Find average growing temperatures 
+growingPrecip = precip_seasons %>%
+  filter(season == 'Growing') %>%
+  mutate(typeP_growing = ifelse(totP > mean(totP), 'High', 'Low')) %>%
+  rename(growingTotP = totP)
+
+#Find average melt temperatures 
+meltPrecip = precip_seasons %>%
+  filter(season == 'Melt') %>%
+  mutate(typeP_melt = ifelse(totP > mean(totP), 'High', 'Low')) %>%
+  rename(meltTotPrecip = totP)
+
+#Total annual precipitation
+annualPrecip = precip_seasons %>%
+  group_by(year) %>%
+  summarise(totP = sum(totP)) %>%
+  mutate(typeP = ifelse(totP > mean(totP), 'High', 'Low'))
+  
+```
+
+Aggreagate everything to a seasonal basis and merge into one dataframe.
+
+```{r}
+#Aggregate to seasonal 
+# 92 for April 1st
+#105 for April 15th
+precip_seasonal = data.frame(precip) %>%
+  mutate(year = year(DATE)) %>%
+  mutate(snowYear = ifelse(month(DATE) < 10, year(DATE), year(DATE) + 1)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 275, 'Growing', 'Snow'))) %>%
+  group_by(season, snowYear) %>%
+  summarise(South_PCP = sum(South_PCP))%>%
+  rename('year' = 'snowYear')
+
+stream_seasonal = data.frame(stream) %>%
+  mutate(year = year(Date)) %>%
+  mutate(snowYear = ifelse(month(Date) < 10, year(Date), year(Date) + 1)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(Date) > lastNZ & yday(Date) < 183, 'Melt', ifelse(yday(Date) > 182 & yday(Date) < 275, 'Growing', 'Snow'))) %>%
+  group_by(season, snowYear) %>%
+  summarise(mean_cmDay = mean(Flow..cm.day., na.rm = TRUE)/10) %>%
+  rename('year' = 'snowYear')
+
+bog_seasonal = data.frame(bog) %>%
+  mutate(year = year(DATE)) %>%
+  mutate(snowYear = ifelse(month(DATE) < 10, year(DATE), year(DATE) + 1)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 275, 'Growing', 'Snow'))) %>%
+  group_by(season, snowYear) %>%
+  summarise(WTE = mean(WTE)) %>%
+  rename('year' = 'snowYear')
+
+snow_seasonal = data.frame(snow) %>%
+  mutate(year = year(Date)) %>%
+  mutate(snowYear = ifelse(month(Date) < 10, year(Date), year(Date) + 1)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(Date) > lastNZ & yday(Date) < 183, 'Melt', ifelse(yday(Date) > 182 & yday(Date) < 275, 'Growing', 'Snow'))) %>%
+  group_by(season, snowYear) %>%
+  summarise(Snow_in = sum(Snow..inches., na.rm = TRUE)) %>%
+  rename('year' = 'snowYear')
+
+seasm_seasonal = seasm %>%
+  mutate(year = year(DATE)) %>%
+  merge(snow_bounds, by = 'year') %>%
+  mutate(season = ifelse(yday(DATE) > lastNZ & yday(DATE) < 183, 'Melt', ifelse(yday(DATE) > 182 & yday(DATE) < 289, 'Growing', 'Snow'))) %>%
+  group_by(season, year, LOCATION) %>%
+  summarise(PAW = mean(PAW, na.rm = TRUE)) %>%
+  select(c(year, LOCATION, season, PAW)) %>%
+  pivot_wider(names_from = LOCATION, values_from = c(PAW)) 
+
+#merge into dataset
+dat = merge(x = precip_seasonal, stream_seasonal, by = c('season', 'year'), how = 'inner')
+dat = merge(dat, bog_seasonal, by = c('season', 'year'), how = 'inner')
+dat = merge(dat, snow_seasonal, by = c('season', 'year'), how = 'inner')
+dat = merge(dat, temp_seasons, by = c('season', 'year'), how = 'inner')
+dat = merge(dat, seasm_seasonal, by = c('season', 'year'), how = 'inner') %>% 
+  arrange(year, season) 
+```
+```{r}
+#Clip to 1969 onward (for Nans)
+dat_clipped = dat %>%
+  filter(year > 1968)
+
+summary(dat_clipped)
+```
+
+
+```{r}
+write.csv(dat_clipped, './mef-data/data_compiled_gapfilled_seasonal.csv', row.names = FALSE)
+dat_clipped
+```
+
