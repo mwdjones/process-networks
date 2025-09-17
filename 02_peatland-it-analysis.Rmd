@@ -33,6 +33,7 @@ library(latex2exp)
 library(Hmisc)
 library(plotly)
 library(multcompView)
+library(rEDM)
 ```
 
 # Data Import
@@ -452,13 +453,135 @@ plotMI_modified = function(data, title, years = NULL, label = NULL){
 }
 ```
 
+## Test significance
+
+
+```{r}
+#Shuffle surrogate method (Ruddell and Kumar, 2009)
+#SurrogateData(data_seasonal$mean_cmDay, method = 'random_shuffle', num_surr = 10)
+
+plotMI_modified_significant = function(data, title, years = NULL, label = NULL, shuffles = 10){
+  
+    #set factor levels
+    data = data %>%
+      mutate(season = factor(season, levels = c("Snow", "Melt", "Growing")))
+      
+    for(lag in seq(0, 2)){
+      seasonal_MI_data = data.frame(matrix(ncol = 0, nrow = 3))
+      seasonal_R_data = data.frame(matrix(ncol = 0, nrow = 3))
+      seasonal_sig_data = data.frame(matrix(ncol = 0, nrow = 3))
+      
+      for(v in vars){
+        
+        if(is.null(years)){
+          #hit when doing all years
+          #critical value
+          seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag, data)
+          seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag, data)
+          
+          #shuffles for significance distribution
+          data_copy = data
+          surrogates_x = SurrogateData(ts(data[v]), method = 'random_shuffle', num_surr = shuffles)
+          surrogates_y = SurrogateData(ts(data['mean_cmDay']), method = 'random_shuffle', num_surr = shuffles)
+          dist = data.frame(matrix(ncol = 0, nrow = 3))
+          
+          for(iter in seq(1, shuffles)){
+            data_copy[v] = surrogates_x[,iter]
+            data_copy['mean_cmDay'] = surrogates_y[,iter]
+            dist[, iter] = calc_seasonalQ_contribution_Conditional(v, lag, data_copy)
+          }
+          
+          #test (one-tailed, p = 0.05)
+          dist_mean = rowMeans(dist)
+          dist_sd = apply(dist, 1, sd)
+          dist_thresh = 1.66*dist_sd + dist_mean
+          seasonal_sig_data[v] = dist_thresh
+          
+        }
+        else{
+          #hit when doing by frost year
+          #critical value
+          seasonal_MI_data[v] = calc_seasonalQ_contribution_Conditional(v, lag,
+                                                                        data, subset = TRUE, listYears = years)
+          seasonal_R_data[v] = calc_seasonalQ_correlations(v, lag,
+                                                           data, subset = TRUE, listYears = years)
+          
+          #shuffles for significance distribution
+          data_copy = data
+          surrogates_x = SurrogateData(ts(data[v]), method = 'random_shuffle', num_surr = shuffles)
+          surrogates_y = SurrogateData(ts(data['mean_cmDay']), method = 'random_shuffle', num_surr = shuffles)
+          dist = data.frame(matrix(ncol = 0, nrow = 3))
+          
+          for(iter in seq(1, shuffles)){
+            data_copy[v] = surrogates_x[,iter]
+            data_copy['mean_cmDay'] = surrogates_y[,iter]
+            dist[, iter] = calc_seasonalQ_contribution_Conditional(v, lag, data_copy, subset = TRUE, listYears = years)
+          }
+          
+          #test (one-tailed, p = 0.05)
+          dist_mean = rowMeans(dist)
+          dist_sd = apply(dist, 1, sd)
+          dist_thresh = 1.66*dist_sd + dist_mean
+          seasonal_sig_data[v] = dist_thresh
+        }
+        
+      }
+      
+      #Plot stacked time series (plus shifted data)
+      x  = c("Snow", "Melt", "Growing")
+      if(lag > 0){
+        seasons = c(x[(lag+1:(length(x)-lag))], x[1:lag])
+      }
+      else if(lag == 0){
+        seasons = x
+      }
+      
+      mask = seasonal_MI_data > seasonal_sig_data
+      seasonal_MI_data_masked = seasonal_MI_data
+      seasonal_MI_data_masked[!mask] = NA
+
+      seasonal_MI_data_plot = seasonal_MI_data_masked %>% 
+         mutate(season_source = factor(x, levels = c("Snow", "Melt", "Growing"))) %>%
+         mutate(season_target = factor(seasons, levels = c("Snow", "Melt", "Growing"))) %>%
+         gather(variable, value, vars)
+      print(seasonal_MI_data_plot)
+      write.csv(seasonal_MI_data_plot, paste0('./MI data/seasonal_mi_data_PAW_', label, '_lag', lag, '.csv'))
+      
+      seasonal_R_data = seasonal_R_data %>% 
+         mutate(season_source = factor(x, levels = c("Snow", "Melt", "Growing"))) %>%
+         mutate(season_target = factor(seasons, levels = c("Snow", "Melt", "Growing"))) %>%
+         gather(variable, value, vars)
+      
+      #Change value sign based on R2 value
+      #seasonal_MI_data = seasonal_MI_data %>%
+      #  mutate(value = ifelse(seasonal_R_data$value < 0, -value, value))
+      
+      #1 - streamflow, 2 - frost, 3 - melt
+      monthlyplot = ggplot(data = seasonal_MI_data_plot, aes(x = season_target, y = value, fill = factor(variable, levels = vars))) +
+        #Plot
+        geom_col(position = 'dodge') +
+        scale_fill_brewer(palette = "BrBG") + 
+        xlab(' ') + 
+        ylab('Conditional Mutual Information') +
+        ylim(0, 1) + 
+        theme(legend.position = 'bottom',
+              panel.background = element_blank()) +
+        ggtitle(paste0(title, ', Lag ', lag))
+    
+      print(monthlyplot)
+      ggsave(paste0('./Figures/Quadrat Plots Significance/', title, '_PAW_Lag', lag, '.pdf'))
+  }
+}
+```
+
+
 ## Plots
 
 Considering first all data together, not separated by annual climatological or hydrological conditions. 
 
 ```{r}
 #All data
-plotMI_modified(data_seasonal, "All Years")
+plotMI_modified_significant(data_seasonal, "All Years")
 ```
 
 # Frost Analysis by Hydrology and Climatology Variables
@@ -540,17 +663,17 @@ head(frostUpland_annual)
 #Rerun IT with these designations
 print("High Frost")
 print("-----------------------------")
-plotMI_modified(data_seasonal,'High Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'High'], label = 'highfrost')
+plotMI_modified_significant(data_seasonal,'High Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'High'], label = 'highfrost')
 
 
 print("Med Frost")
 print("-----------------------------")
-plotMI_modified(data_seasonal, 'Med Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Med'], label = 'medfrost')
+plotMI_modified_significant(data_seasonal, 'Med Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Med'], label = 'medfrost')
 
 
 print("Low Frost")
 print("-----------------------------")
-plotMI_modified(data_seasonal, 'Low Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Low'], label = 'lowfrost')
+plotMI_modified_significant(data_seasonal, 'Low Frost', frostUpland_annual$year[frostUpland_annual$frostQuantMeas == 'Low'], label = 'lowfrost')
 ```
 
 
