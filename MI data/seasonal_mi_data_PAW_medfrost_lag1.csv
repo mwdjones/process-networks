@@ -8,7 +8,7 @@
 "7","Snow","Melt","MEANC",NA
 "8","Melt","Growing","MEANC",NA
 "9","Growing","Snow","MEANC",NA
-"10","Snow","Melt","South_PCP",NA
+"10","Snow","Melt","South_PCP",0.481203112263154
 "11","Melt","Growing","South_PCP",NA
 "12","Growing","Snow","South_PCP",NA
 "13","Snow","Melt","Snow_in",0.459147904014043

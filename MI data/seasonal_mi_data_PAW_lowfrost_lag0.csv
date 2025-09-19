@@ -2,7 +2,7 @@
 "1","Snow","Snow","S2S",0.50273615734542
 "2","Melt","Melt","S2S",NA
 "3","Growing","Growing","S2S",0.625788112124724
-"4","Snow","Snow","S2E",0.270942414069468
+"4","Snow","Snow","S2E",NA
 "5","Melt","Melt","S2E",NA
 "6","Growing","Growing","S2E",NA
 "7","Snow","Snow","MEANC",NA
@@ -15,5 +15,5 @@
 "14","Melt","Melt","Snow_in",NA
 "15","Growing","Growing","Snow_in",NA
 "16","Snow","Snow","WTE",NA
-"17","Melt","Melt","WTE",0.269456257694146
+"17","Melt","Melt","WTE",NA
 "18","Growing","Growing","WTE",0.302137923146084
