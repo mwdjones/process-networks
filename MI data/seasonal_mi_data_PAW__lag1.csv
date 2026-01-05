@@ -5,7 +5,7 @@
 "4","Snow","Melt","S2E",NA
 "5","Melt","Growing","S2E",NA
 "6","Growing","Snow","S2E",NA
-"7","Snow","Melt","MEANC",NA
+"7","Snow","Melt","MEANC",0.515508336544123
 "8","Melt","Growing","MEANC",NA
 "9","Growing","Snow","MEANC",NA
 "10","Snow","Melt","South_PCP",NA
@@ -14,6 +14,6 @@
 "13","Snow","Melt","Snow_in",NA
 "14","Melt","Growing","Snow_in",NA
 "15","Growing","Snow","Snow_in",NA
-"16","Snow","Melt","WTE",0.509967301404363
+"16","Snow","Melt","WTE",NA
 "17","Melt","Growing","WTE",NA
-"18","Growing","Snow","WTE",0.509967301404363
+"18","Growing","Snow","WTE",NA
